@@ -1,0 +1,79 @@
+/*
+ * Dark-only by design - this dashboard is one committed look, so every color is
+ * painted explicitly rather than inheriting the OS theme.
+ *
+ * --accent is the single data-series hue. It was validated against the --surface
+ * value below (OKLCH lightness band, chroma floor, WCAG contrast) rather than
+ * picked by eye. --warning and --critical are reserved status tokens and always
+ * ship beside a text label, never as color alone.
+ */
+:root {
+  --plane: #0a0a0b;
+  --surface: #161618;
+  --surface-2: #1c1c1f;
+  --surface-3: #232326;
+  --line: #232326;
+  --grid: #232326;
+  --baseline: #2f2f33;
+
+  --ink: #f5f5f7;
+  --ink-2: #a1a1a8;
+  --muted: #6b6b70;
+
+  --accent: #05af80;
+  --accent-line: #05af80;
+  --accent-wash: rgba(5, 175, 128, 0.10);
+  --accent-dim: rgba(5, 175, 128, 0.16);
+  /* De-emphasis neutral for the context half of an emphasis chart (cost beside
+     profit). Validated against --surface for the lightness band and 3:1 contrast. */
+  --series-mute: #75767e;
+
+  --warning: #fab219;
+  --critical: #d03b3b;
+
+  --light-red: #ff5f57;
+  --light-amber: #febc2e;
+  --light-green: #28c840;
+
+  --radius: 12px;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
