@@ -10,7 +10,7 @@ export default function StatTile({ label, value, sub, delta, points, tone }) {
     <div className="tile">
       <div className="label">{label}</div>
       <div className="row">
-        <div className={`value ${tone === 'accent' ? 'accent' : ''}`}>{value}</div>
+        <div className={`value ${tone || ''}`}>{value}</div>
         {points ? <Sparkline points={points} /> : null}
       </div>
       <div className="foot">
@@ -54,6 +54,9 @@ export default function StatTile({ label, value, sub, delta, points, tone }) {
         }
         .value.accent {
           color: var(--accent);
+        }
+        .value.critical {
+          color: var(--critical);
         }
         .foot {
           display: flex;

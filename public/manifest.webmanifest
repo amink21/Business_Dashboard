@@ -1,0 +1,53 @@
+{
+  "name": "Hustle Desk",
+  "short_name": "Hustle",
+  "description": "Live revenue, profit and inventory across the 3D printing and Tesla charger lines.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0b",
+  "theme_color": "#0a0a0b",
+  "categories": ["business", "finance", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "3D Printing",
+      "short_name": "Printing",
+      "url": "/",
+      "description": "Print orders, pipeline and printer hours"
+    },
+    {
+      "name": "Tesla Chargers",
+      "short_name": "Chargers",
+      "url": "/tesla",
+      "description": "Charger inventory, stock cover and sell-through"
+    }
+  ]
+}

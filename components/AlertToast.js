@@ -61,7 +61,7 @@ export default function AlertToast({ alerts, nonce, app, mark }) {
       <style jsx>{`
         .dock {
           position: fixed;
-          top: 12px;
+          top: calc(12px + env(safe-area-inset-top, 0px));
           left: 12px;
           right: 12px;
           z-index: 60;
@@ -151,7 +151,7 @@ export default function AlertToast({ alerts, nonce, app, mark }) {
             justify-content: flex-end;
             left: auto;
             right: 18px;
-            top: 18px;
+            top: calc(18px + env(safe-area-inset-top, 0px));
             width: 400px;
           }
         }

@@ -28,6 +28,7 @@ export default function TeslaOverview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncedAt, setSyncedAt] = useState(null);
+  const [stale, setStale] = useState(false);
 
   const [rangeId, setRangeId] = useState('all');
   const [search, setSearch] = useState('');
@@ -39,6 +40,8 @@ export default function TeslaOverview() {
     setError(null);
     try {
       const res = await fetch('/api/sheet?tab=tesla');
+      // The service worker tags a response it served from cache while offline.
+      setStale(res.headers.get('x-from-cache') === '1');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setRaw(data);
@@ -236,6 +239,31 @@ export default function TeslaOverview() {
             value={String(stats.count)}
             sub="every charger in the sheet"
           />
+          <StatTile
+            label="Days of cover"
+            value={stats.daysCover ? stats.daysCover.toFixed(1) : '—'}
+            tone={stats.daysCover && stats.daysCover < 14 ? 'critical' : undefined}
+            sub={
+              stats.perDay
+                ? `${stats.available} left at ${stats.perDay.toFixed(2)} sold per day`
+                : 'not enough sales to judge'
+            }
+          />
+          <StatTile
+            label="Return on cost"
+            value={`${stats.returnOnCost.toFixed(1)}%`}
+            sub="profit per dollar of stock bought"
+          />
+          <StatTile
+            label="Profit / day held"
+            value={fmtMoney(stats.profitPerDayHeld, true)}
+            sub="what a day of inventory earns"
+          />
+          <StatTile
+            label="Oldest unit"
+            value={stats.oldestDays ? `${stats.oldestDays}d` : '—'}
+            sub={stats.oldestLabel ? `${stats.oldestLabel}, still unsold` : 'nothing unsold'}
+          />
         </div>
 
         <div className="two">
@@ -282,9 +310,11 @@ export default function TeslaOverview() {
         <footer className="foot">
           <span>Google Sheets · Tesla Inventory</span>
           <span>
-            {syncedAt
-              ? `Synced ${syncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-              : '—'}
+            {stale
+              ? 'Offline · showing last synced numbers'
+              : syncedAt
+                ? `Synced ${syncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                : '—'}
           </span>
         </footer>
       </Shell>

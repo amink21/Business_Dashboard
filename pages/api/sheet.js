@@ -9,6 +9,7 @@ function aliases() {
   return {
     print: process.env.SHEET_NAME || '3D Print Orders',
     tesla: process.env.TESLA_SHEET_NAME || 'Tesla Inventory',
+    printSummary: process.env.PRINT_SUMMARY_SHEET_NAME || '3D Print Summary',
   };
 }
 
@@ -115,6 +116,14 @@ export default async function handler(req, res) {
     }
 
     res.setHeader('Cache-Control', 's-maxage=15, stale-while-revalidate=59');
+
+    // Summary tabs are laid out as labelled cells, not as a table with one header
+    // row, so they come back as raw rows for the caller to look up by label.
+    if (req.query.raw) {
+      const { data } = Papa.parse(csvText, { skipEmptyLines: 'greedy' });
+      return res.status(200).json({ rows: data });
+    }
+
     res.status(200).json(csvToObjects(csvText));
   } catch (err) {
     console.error(err);

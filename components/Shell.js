@@ -61,7 +61,12 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
         .page {
           max-width: 940px;
           margin: 0 auto;
-          padding: 18px 14px 48px;
+          /* Installed to a home screen the page runs full-bleed, so keep the
+             chrome clear of the notch and the home indicator. */
+          padding: calc(18px + env(safe-area-inset-top, 0px))
+            calc(14px + env(safe-area-inset-right, 0px))
+            calc(48px + env(safe-area-inset-bottom, 0px))
+            calc(14px + env(safe-area-inset-left, 0px));
         }
         .top {
           display: flex;
@@ -169,7 +174,10 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
         }
         @media (max-width: 720px) {
           .page {
-            padding: 10px 8px 40px;
+            padding: calc(10px + env(safe-area-inset-top, 0px))
+              calc(8px + env(safe-area-inset-right, 0px))
+              calc(40px + env(safe-area-inset-bottom, 0px))
+              calc(8px + env(safe-area-inset-left, 0px));
           }
         }
         @media (max-width: 480px) {

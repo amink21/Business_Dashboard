@@ -21,13 +21,15 @@ import {
   topBy,
 } from '../lib/data';
 import { printAlerts } from '../lib/alerts';
-import { monthlyStack, normalize, pipelineBars, summarize } from '../lib/print';
+import { lookupMetric, monthlyStack, normalize, pipelineBars, summarize } from '../lib/print';
 
 export default function PrintOverview() {
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncedAt, setSyncedAt] = useState(null);
+  const [stale, setStale] = useState(false);
+  const [equipment, setEquipment] = useState(undefined);
 
   const [rangeId, setRangeId] = useState('all');
   const [search, setSearch] = useState('');
@@ -39,10 +41,22 @@ export default function PrintOverview() {
     setError(null);
     try {
       const res = await fetch('/api/sheet?tab=print');
+      // The service worker tags a response it served from cache while offline.
+      setStale(res.headers.get('x-from-cache') === '1');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to load');
       setRaw(data);
       setSyncedAt(new Date());
+
+      // Equipment spend lives on the summary tab as a labelled cell. It is a
+      // second-class fetch: if it fails the rest of the page is still correct.
+      try {
+        const sum = await fetch('/api/sheet?tab=printSummary&raw=1');
+        const body = await sum.json();
+        setEquipment(sum.ok ? lookupMetric(body.rows, 'Total Equipment & Filament Spent') : null);
+      } catch {
+        setEquipment(null);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -233,6 +247,38 @@ export default function PrintOverview() {
             sub={stats.count ? `${(stats.hours / stats.count).toFixed(1)} h per order` : 'no orders'}
             points={hoursSpark}
           />
+          <StatTile
+            label="After equipment"
+            value={equipment ? fmtMoney(stats.net - equipment, true) : '—'}
+            tone={equipment ? (stats.net - equipment >= 0 ? 'accent' : 'critical') : undefined}
+            sub={
+              equipment
+                ? `${fmtMoney(equipment, true)} on printer + filament`
+                : equipment === undefined
+                  ? 'reading the summary tab…'
+                  : 'summary tab unavailable'
+            }
+          />
+          <StatTile
+            label="Typical rate"
+            value={`${fmtMoney(stats.medianRate, true)}/hr`}
+            sub="median job — half earn less per printer hour"
+          />
+          <StatTile
+            label="Queued print time"
+            value={`${stats.queuedHours.toFixed(1)} h`}
+            sub={`${stats.pipeline} orders waiting on the plate`}
+          />
+          <StatTile
+            label="Under rate"
+            value={String(stats.underCount)}
+            tone={stats.underCount ? 'critical' : undefined}
+            sub={
+              stats.underCount
+                ? `${stats.underHours.toFixed(0)} h queued below the typical rate`
+                : 'every queued job beats the median'
+            }
+          />
         </div>
 
         <div className="two">
@@ -279,9 +325,11 @@ export default function PrintOverview() {
         <footer className="foot">
           <span>Google Sheets · 3D Print Orders</span>
           <span>
-            {syncedAt
-              ? `Synced ${syncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-              : '—'}
+            {stale
+              ? 'Offline · showing last synced numbers'
+              : syncedAt
+                ? `Synced ${syncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                : '—'}
           </span>
         </footer>
       </Shell>
