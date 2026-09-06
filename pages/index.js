@@ -1,7 +1,9 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import BarChart from '../components/BarChart';
 import Card from '../components/Card';
+import ProfitCalendar from '../components/ProfitCalendar';
 import FilterRow from '../components/FilterRow';
 import RecordFeed from '../components/RecordFeed';
 import AlertToast from '../components/AlertToast';
@@ -11,6 +13,7 @@ import StatTile from '../components/StatTile';
 import VolumePanel from '../components/VolumePanel';
 import {
   cumulativeSeries,
+  dailySeries,
   fmtDate,
   fmtMoney,
   inBounds,
@@ -101,6 +104,10 @@ export default function PrintOverview() {
     return summarize(orders.filter((o) => inBounds(o, pb)));
   }, [orders, bounds]);
 
+  const calendar = useMemo(
+    () => dailySeries(scoped, bounds, (o) => o.date, (o) => (o.kind === 'completed' ? o.profit : 0)),
+    [scoped, bounds]
+  );
   const months = useMemo(() => monthlyStack(scoped, bounds), [scoped, bounds]);
   const pipeline = useMemo(() => pipelineBars(scoped), [scoped]);
   const topItems = useMemo(
@@ -314,6 +321,12 @@ export default function PrintOverview() {
           </Card>
         </div>
 
+        <Card title="Daily net profit" note="every day in range">
+          <ProfitCalendar days={calendar} />
+        </Card>
+
+        <div className="spacer" />
+
         <Card title="Payments" note={`${feed.length} shown`} flush>
           {loading && !raw.length ? (
             <div className="loading">Connecting to sheet…</div>
@@ -323,7 +336,12 @@ export default function PrintOverview() {
         </Card>
 
         <footer className="foot">
-          <span>Google Sheets · 3D Print Orders</span>
+          <span>
+            Google Sheets · 3D Print Orders ·{' '}
+            <Link href="/wrapped" className="wrapped">
+              Wrapped →
+            </Link>
+          </span>
           <span>
             {stale
               ? 'Offline · showing last synced numbers'
@@ -356,11 +374,22 @@ export default function PrintOverview() {
           gap: 12px;
           margin-bottom: 12px;
         }
+        .spacer {
+          height: 12px;
+        }
         .loading {
           text-align: center;
           color: var(--muted);
           font-size: 13px;
           padding: 40px 0;
+        }
+        .foot :global(.wrapped) {
+          color: var(--accent);
+          text-decoration: none;
+          font-weight: 600;
+        }
+        .foot :global(.wrapped:hover) {
+          text-decoration: underline;
         }
         .foot {
           display: flex;

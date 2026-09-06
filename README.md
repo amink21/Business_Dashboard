@@ -138,6 +138,28 @@ Range presets default to **All time**. Every completed print order lands in a tw
 window, so `30 days` there honestly shows $0 closed and only the open pipeline; the charger
 side is still selling, so its shorter ranges are populated.
 
+## The other four pages
+
+**Quote** (`/quote`) prices a job against your own finished work. Enter print hours, material
+cost and a price; it returns the profit per printer hour, where that lands among past jobs,
+and what to charge to match your median, your all-in average, or your top quartile. It lists
+the nearest jobs by length as a sanity check. Every benchmark is your history, not a rule of
+thumb.
+
+**Console** (`/console`) renders every sheet row as the API call that would have created it -
+`POST /v1/charges 200`, `POST /v1/refunds 402`, `PUT /v1/inventory 201` - streaming in one
+line at a time, filterable, each expanding to a JSON body. Amounts, items, statuses and dates
+are real; the ids, clock times and latencies are set dressing, and the page says so. Purely
+for the bit.
+
+**Wrapped** (`/wrapped`) is a twelve-card story across both hustles: money in, best day, best
+month, printer hours, your regular customer, fastest flip, which hustle won. Tap to advance,
+hold to pause, arrow keys work, screenshot to share. Cards with no data behind them are
+dropped rather than padded.
+
+**Daily net profit** is a calendar heatmap on both dashboards - one square per day, shaded by
+what that day earned.
+
 ## Sale alerts
 
 One lock-screen alert per visit, picked at random when the sheet data lands, then gone
@@ -169,6 +191,10 @@ re-rolls the alert.
   re-encode length) and carry their value at the tip, so no value is hover-only.
 - **Pipeline / inventory bars** are the exception: there the category *is* a state, so they
   wear status colors - always beside the sheet's own status text.
+- **The calendar** is sequential encoding: one hue, low to high, with break points taken from
+  the data's own quantiles so a quiet month still shows shape. Being continuous magnitude, its
+  quietest step is allowed to recede toward the surface - which is why it ships with a scale
+  legend and a table twin instead of leaning on color alone.
 
 ## Colors
 
@@ -187,10 +213,13 @@ lib/data.js     shared: parsing, date ranges, cumulative + spark series, formatt
 lib/print.js    3D print orders: normalize, summarize, monthly stack, pipeline
 lib/tesla.js    charger inventory: normalize, summarize, monthly stack, stock
 lib/alerts.js   the pool of real moments the lock-screen alert draws from
+lib/wrapped.js  the twelve story cards, built from both hustles
+lib/console.js  sheet rows rendered as API traffic
 components/     Shell (chrome + tabs), FilterRow, VolumePanel, VolumeChart/Table,
                 StackedColumnChart, BarChart, StatTile, Sparkline, RecordFeed,
-                StatusPill, AlertToast, BrowserChrome, Card
-pages/          index.js (3D printing), tesla.js, api/sheet.js
+                StatusPill, AlertToast, BrowserChrome, Card, ProfitCalendar
+pages/          index.js (3D printing), tesla.js, quote.js, console.js,
+                wrapped.js, api/sheet.js
 public/         manifest.webmanifest, sw.js, icons/
 ```
 

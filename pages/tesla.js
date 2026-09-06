@@ -1,7 +1,9 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import BarChart from '../components/BarChart';
 import Card from '../components/Card';
+import ProfitCalendar from '../components/ProfitCalendar';
 import FilterRow from '../components/FilterRow';
 import RecordFeed from '../components/RecordFeed';
 import AlertToast from '../components/AlertToast';
@@ -11,6 +13,7 @@ import StatTile from '../components/StatTile';
 import VolumePanel from '../components/VolumePanel';
 import {
   cumulativeSeries,
+  dailySeries,
   fmtDate,
   fmtMoney,
   inBounds,
@@ -88,6 +91,10 @@ export default function TeslaOverview() {
     return summarize(items.filter((i) => inBounds(i, pb)));
   }, [items, bounds]);
 
+  const calendar = useMemo(
+    () => dailySeries(scoped, bounds, (i) => i.sold, (i) => (i.kind === 'completed' ? i.profit : 0)),
+    [scoped, bounds]
+  );
   const months = useMemo(() => monthlyStack(scoped, bounds), [scoped, bounds]);
   const stock = useMemo(() => stockBars(scoped), [scoped]);
   const byProduct = useMemo(
@@ -299,6 +306,12 @@ export default function TeslaOverview() {
           </Card>
         </div>
 
+        <Card title="Daily net profit" note="every day in range">
+          <ProfitCalendar days={calendar} />
+        </Card>
+
+        <div className="spacer" />
+
         <Card title="Inventory ledger" note={`${feed.length} shown`} flush>
           {loading && !raw.length ? (
             <div className="loading">Connecting to sheet…</div>
@@ -308,7 +321,12 @@ export default function TeslaOverview() {
         </Card>
 
         <footer className="foot">
-          <span>Google Sheets · Tesla Inventory</span>
+          <span>
+            Google Sheets · Tesla Inventory ·{' '}
+            <Link href="/wrapped" className="wrapped">
+              Wrapped →
+            </Link>
+          </span>
           <span>
             {stale
               ? 'Offline · showing last synced numbers'
@@ -341,11 +359,22 @@ export default function TeslaOverview() {
           gap: 12px;
           margin-bottom: 12px;
         }
+        .spacer {
+          height: 12px;
+        }
         .loading {
           text-align: center;
           color: var(--muted);
           font-size: 13px;
           padding: 40px 0;
+        }
+        .foot :global(.wrapped) {
+          color: var(--accent);
+          text-decoration: none;
+          font-weight: 600;
+        }
+        .foot :global(.wrapped:hover) {
+          text-decoration: underline;
         }
         .foot {
           display: flex;

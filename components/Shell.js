@@ -5,6 +5,8 @@ import BrowserChrome from './BrowserChrome';
 const TABS = [
   { href: '/', label: '3D Printing', mark: '🖨️', name: 'Print Lab' },
   { href: '/tesla', label: 'Tesla Chargers', mark: '⚡', name: 'Charger Desk' },
+  { href: '/quote', label: 'Quote', mark: '🧮', name: 'Quote Desk' },
+  { href: '/console', label: 'Console', mark: '⌘', name: 'API Console' },
 ];
 
 export default function Shell({ path, loading, onRefresh, onAlert, dim, children }) {
