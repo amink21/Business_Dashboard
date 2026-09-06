@@ -138,6 +138,56 @@ Range presets default to **All time**. Every completed print order lands in a tw
 window, so `30 days` there honestly shows $0 closed and only the open pipeline; the charger
 side is still selling, so its shorter ranges are populated.
 
+## Completing orders from the site
+
+Reading needs no credentials. Writing does, because changing a cell requires a
+signed-in identity — so a small Apps Script owned by your Google account does the
+writing on your behalf.
+
+**1. Replace the script.** Open the Apps Script project, paste
+`google-apps-script/Code.gs` over everything in `Code.gs`, and change `TOKEN` to a long
+random string. Delete the old `Index.html` if you like — it is the standalone dashboard
+this site replaced, and nothing calls it now.
+
+**2. Deploy it.** Deploy → New deployment → Web app, *Execute as* **Me**, *Who has access*
+**Anyone**. Copy the `/exec` URL. Later edits need Manage deployments → edit the existing
+one, or the URL changes.
+
+**3. Point the site at it.**
+
+```
+APPS_SCRIPT_URL=https://script.google.com/macros/s/…/exec
+APPS_SCRIPT_TOKEN=the same string you put in TOKEN
+DASHBOARD_PIN=optional
+```
+
+Locally that is `.env.local`; on Vercel it is Project → Settings → Environment Variables.
+Leave them unset and the dashboard stays read-only — the status control simply reports that
+writing isn't configured.
+
+Then the status pill on each payment row becomes a picker. Choosing a status updates the row
+on screen immediately, writes to the sheet, and rolls back with an error if the sheet refuses.
+
+### How it is wired
+
+The browser never sees the script URL or the token. It posts to `/api/order` on our own
+server, which validates the status against a fixed list and forwards the write. Anything else
+would put a key that can edit your spreadsheet into a public JavaScript bundle.
+
+Apps Script answers a POST with a 302 to `script.googleusercontent.com` and serves the result
+there, which turns the follow-up into a GET. That is fine — the write already happened on the
+first hop — but it is why the proxy reads the redirected response rather than expecting JSON
+straight back.
+
+**On completion the script fills Profit and Margin %** — but only when the cell is empty *and*
+holds no formula. If your sheet computes those columns, writing a literal would destroy the
+formula, so it leaves them alone.
+
+**Security.** `Who has access: Anyone` is required for a server to call the script without a
+Google login, so `TOKEN` is the only thing protecting your sheet — treat it like a password.
+`DASHBOARD_PIN` is the second lock: set it and changing an order asks for the PIN once per
+device. Without it, anyone who finds your URL can change your order statuses.
+
 ## The other four pages
 
 **Quote** (`/quote`) prices a job against your own finished work. Enter print hours, material
@@ -219,14 +269,14 @@ components/     Shell (chrome + tabs), FilterRow, VolumePanel, VolumeChart/Table
                 StackedColumnChart, BarChart, StatTile, Sparkline, RecordFeed,
                 StatusPill, AlertToast, BrowserChrome, Card, ProfitCalendar
 pages/          index.js (3D printing), tesla.js, quote.js, console.js,
-                wrapped.js, api/sheet.js
+                wrapped.js, api/sheet.js (read), api/order.js (write proxy)
+google-apps-script/Code.gs   paste into Apps Script; does the actual writing
 public/         manifest.webmanifest, sw.js, icons/
 ```
 
 ## Notes
 
-- Read-only by design. Writing back to the sheet would need real authentication (OAuth or a
-  service account), since writes require a signed-in identity.
+- Reading is credential-free; writing goes through the Apps Script above.
 - The `Tesla Summary`, `3D Print Summary` and `Master Dashboard` tabs aren't read - every
   figure here is recomputed from the two raw data tabs, which is why they agree with those
   summary tabs rather than depending on them.

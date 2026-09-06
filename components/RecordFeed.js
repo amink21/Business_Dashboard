@@ -13,7 +13,7 @@ function initials(text) {
 
 // Transaction rows, shared by both dashboards. Each page maps its own records
 // into { key, title, meta, badge, kind, status, amount, sub, date }.
-export default function RecordFeed({ rows, emptyText }) {
+export default function RecordFeed({ rows, emptyText, statusOptions, onStatusChange, savingKey }) {
   if (!rows.length) {
     return (
       <div className="empty">
@@ -44,7 +44,33 @@ export default function RecordFeed({ rows, emptyText }) {
           </span>
 
           <span className="state">
-            <StatusPill kind={r.kind} label={r.status || 'Unknown'} />
+            {statusOptions && r.editable !== false ? (
+              <span className={`editable ${savingKey === r.key ? 'saving' : ''}`}>
+                <StatusPill kind={r.kind} label={r.status || 'Unknown'} />
+                <span className="caret" aria-hidden="true">
+                  ▾
+                </span>
+                {/* A native select rather than a custom popover: on a phone this
+                    is the OS picker, which beats anything hand-rolled. */}
+                <select
+                  value={r.status || ''}
+                  disabled={savingKey === r.key}
+                  onChange={(e) => onStatusChange(r, e.target.value)}
+                  aria-label={`Status for ${r.title}`}
+                >
+                  {(statusOptions.includes(r.status)
+                    ? statusOptions
+                    : [r.status || 'Unknown', ...statusOptions]
+                  ).map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            ) : (
+              <StatusPill kind={r.kind} label={r.status || 'Unknown'} />
+            )}
           </span>
 
           <span className="amount">
@@ -107,6 +133,39 @@ export default function RecordFeed({ rows, emptyText }) {
           text-overflow: ellipsis;
           white-space: nowrap;
           margin-top: 1px;
+        }
+        .editable {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          gap: 3px;
+          border-radius: 7px;
+          padding: 1px 3px 1px 1px;
+        }
+        .editable:hover {
+          background: var(--surface-2);
+        }
+        .editable.saving {
+          opacity: 0.5;
+        }
+        .caret {
+          font-size: 9px;
+          color: var(--muted);
+        }
+        .editable select {
+          position: absolute;
+          inset: 0;
+          width: 100%;
+          height: 100%;
+          opacity: 0;
+          cursor: pointer;
+          border: none;
+          appearance: none;
+          -webkit-appearance: none;
+        }
+        .editable:focus-within {
+          outline: 2px solid var(--accent);
+          outline-offset: 1px;
         }
         .amount {
           display: flex;

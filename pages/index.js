@@ -26,6 +26,15 @@ import {
 import { printAlerts } from '../lib/alerts';
 import { lookupMetric, monthlyStack, normalize, pipelineBars, summarize } from '../lib/print';
 
+// Must match ALLOWED_STATUSES in google-apps-script/Code.gs.
+const STATUS_OPTIONS = [
+  'Need to Print',
+  'Printed',
+  'Waiting for Pickup',
+  'Completed',
+  'Cancelled',
+];
+
 export default function PrintOverview() {
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +42,8 @@ export default function PrintOverview() {
   const [syncedAt, setSyncedAt] = useState(null);
   const [stale, setStale] = useState(false);
   const [equipment, setEquipment] = useState(undefined);
+  const [savingKey, setSavingKey] = useState(null);
+  const [writeError, setWriteError] = useState(null);
 
   const [rangeId, setRangeId] = useState('all');
   const [search, setSearch] = useState('');
@@ -70,6 +81,60 @@ export default function PrintOverview() {
   useEffect(() => {
     load();
   }, []);
+
+  // Writing back to the sheet. The row updates on screen first and rolls back if
+  // the sheet refuses, so a tap feels instant but never lies about what landed.
+  async function saveStatus(row, status) {
+    const previous = raw;
+    setSavingKey(row.key);
+    setWriteError(null);
+    setRaw((rows) =>
+      rows.map((r) => (r['Order ID'] === row.key ? { ...r, Status: status } : r))
+    );
+
+    const post = (pin) =>
+      fetch('/api/order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(pin ? { 'x-dashboard-pin': pin } : {}),
+        },
+        body: JSON.stringify({ orderId: row.key, status }),
+      });
+
+    try {
+      let stored = null;
+      try {
+        stored = window.localStorage.getItem('dashboardPin');
+      } catch (err) {
+        stored = null;
+      }
+
+      let res = await post(stored);
+
+      // A PIN is only configured on some deployments, so ask for it lazily -
+      // the first time the server actually demands one.
+      if (res.status === 401) {
+        const entered = window.prompt('PIN required to change orders');
+        if (!entered) throw new Error('Cancelled.');
+        try {
+          window.localStorage.setItem('dashboardPin', entered);
+        } catch (err) {
+          /* private mode - it just asks again next time */
+        }
+        res = await post(entered);
+      }
+
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not save.');
+      setSyncedAt(new Date());
+    } catch (e) {
+      setRaw(previous);
+      setWriteError(e.message);
+    } finally {
+      setSavingKey(null);
+    }
+  }
 
   const orders = useMemo(() => normalize(raw), [raw]);
   const bounds = useMemo(() => rangeBounds(orders, rangeId), [orders, rangeId]);
@@ -156,6 +221,9 @@ export default function PrintOverview() {
         .reverse()
         .map((o) => ({
           key: o.id || `${o.customer}-${o.item}`,
+          // Status writes address a row by its Order ID, so a row without one
+          // can be read but not edited - better than posting a made-up id.
+          editable: Boolean(o.id),
           badge: (o.customer || '?').trim().charAt(0).toUpperCase() || '?',
           title: o.item,
           meta: [o.customer || 'No customer', o.platform, o.delivery].filter(Boolean).join(' · '),
@@ -187,6 +255,14 @@ export default function PrintOverview() {
         dim={loading && raw.length > 0}
       >
         {error && <div className="error">{error}</div>}
+        {writeError && (
+          <div className="error">
+            {writeError}{' '}
+            <button type="button" className="dismiss" onClick={() => setWriteError(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
 
         <FilterRow
           rangeId={rangeId}
@@ -331,7 +407,12 @@ export default function PrintOverview() {
           {loading && !raw.length ? (
             <div className="loading">Connecting to sheet…</div>
           ) : (
-            <RecordFeed rows={feed} />
+            <RecordFeed
+              rows={feed}
+              statusOptions={STATUS_OPTIONS}
+              onStatusChange={saveStatus}
+              savingKey={savingKey}
+            />
           )}
         </Card>
 
@@ -353,6 +434,14 @@ export default function PrintOverview() {
       </Shell>
 
       <style jsx>{`
+        .dismiss {
+          background: none;
+          border: none;
+          color: inherit;
+          text-decoration: underline;
+          font-size: 12px;
+          padding: 0 2px;
+        }
         .error {
           background: rgba(208, 59, 59, 0.12);
           border: 1px solid rgba(208, 59, 59, 0.35);
