@@ -6,7 +6,7 @@
 //   pages         - network-first, falling back to cache so the app still opens
 //
 // Bump CACHE_VERSION to retire every old cache on the next activate.
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const STATIC_CACHE = `hustle-static-${CACHE_VERSION}`;
 const DATA_CACHE = `hustle-data-${CACHE_VERSION}`;
 const PAGE_CACHE = `hustle-pages-${CACHE_VERSION}`;
@@ -49,7 +49,7 @@ self.addEventListener('install', (event) => {
       for (const url of OFFLINE_URLS) {
         try {
           const res = await fetch(url, { credentials: 'same-origin' });
-          if (res && res.ok) await putSafe(PAGE_CACHE, new URL(url, self.location.origin).href, res);
+          if (cacheable(res)) await putSafe(PAGE_CACHE, new URL(url, self.location.origin).href, res);
         } catch (err) {
           /* precache is an optimisation, not a requirement */
         }
@@ -81,12 +81,19 @@ function markStale(response) {
   });
 }
 
+// A response that arrived via a redirect is not the thing that was asked for -
+// signed out, every page fetch lands on /login, and caching that under "/" would
+// serve the login screen offline forever.
+function cacheable(response) {
+  return response && response.ok && !response.redirected;
+}
+
 async function cacheFirst(request, cacheName) {
   const key = request.url;
   const hit = await matchIn(cacheName, key);
   if (hit) return hit;
   const response = await fetch(request);
-  if (response && response.ok) putSafe(cacheName, key, response.clone());
+  if (cacheable(response)) putSafe(cacheName, key, response.clone());
   return response;
 }
 
@@ -94,7 +101,7 @@ async function networkFirst(request, cacheName, stale) {
   const key = request.url;
   try {
     const response = await fetch(request);
-    if (response && response.ok) putSafe(cacheName, key, response.clone());
+    if (cacheable(response)) putSafe(cacheName, key, response.clone());
     return response;
   } catch (err) {
     const hit = await matchIn(cacheName, key);

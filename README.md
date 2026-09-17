@@ -138,6 +138,42 @@ Range presets default to **All time**. Every completed print order lands in a tw
 window, so `30 days` there honestly shows $0 closed and only the open pipeline; the charger
 side is still selling, so its shorter ranges are populated.
 
+## Password
+
+Set `DASHBOARD_PASSWORD` and the whole site is behind a sign-in screen. Leave it blank and
+the site is open to anyone with the link — fine on localhost, not fine on a public URL where
+the pages show customer names next to what each person paid.
+
+```
+DASHBOARD_PASSWORD=something-long-and-boring
+```
+
+Restart after changing it (Next reads `.env*` once at startup). On Vercel it goes in
+Project → Settings → Environment Variables.
+
+### What it does
+
+`middleware.js` gates every page **and** `/api/sheet` and `/api/order`. Gating only the pages
+would be decoration: `curl yoursite/api/sheet?tab=print` would still hand over the entire
+sheet. Left open are the login screen itself, `/api/login`, and the files an installed PWA
+fetches before it has a session (`manifest.webmanifest`, `sw.js`, `icons/`).
+
+Signing in sets an HttpOnly cookie holding `<issued-at>.<HMAC>`, signed with a key derived
+from the password. Nothing about the password travels in the cookie, a tampered cookie fails
+the signature check, and sessions last 30 days. Because the key comes from the password,
+changing the password signs every device out.
+
+Both comparisons — the password, and the cookie signature — are constant-time over
+equal-length digests, so neither leaks by how long it takes to fail. Wrong guesses are capped
+at 8 per IP per 15 minutes and always take the same ~400 ms to come back.
+
+The header has a ⎋ button to sign out, which drops the cookie and clears the offline caches
+so a shared phone isn't left holding your numbers.
+
+A note on the service worker: a signed-out page request now redirects to the login screen, and
+redirected responses are never cached — otherwise `/` would serve the login page from cache
+forever.
+
 ## Completing orders from the site
 
 Reading needs no credentials. Writing does, because changing a cell requires a

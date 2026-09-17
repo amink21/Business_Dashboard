@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
 import BrowserChrome from './BrowserChrome';
 
 const TABS = [
@@ -12,6 +13,42 @@ const TABS = [
 export default function Shell({ path, loading, onRefresh, onAlert, dim, children }) {
   const { pathname } = useRouter();
   const active = TABS.find((t) => t.href === pathname) || TABS[0];
+  const [locked, setLocked] = useState(false);
+
+  // Only offer a way out if there is something to be let out of.
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/login')
+      .then((r) => r.json())
+      .then((b) => {
+        if (alive) setLocked(Boolean(b.enabled));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function signOut() {
+    try {
+      await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'logout' }),
+      });
+    } catch (err) {
+      /* clearing the cookie locally still matters */
+    }
+    // Drop the offline copies too, so signing out on a shared phone doesn't
+    // leave the numbers sitting in the cache.
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (err) {
+      /* no service worker, or storage unavailable */
+    }
+    window.location.assign('/login');
+  }
 
   return (
     <main className="page">
@@ -39,6 +76,17 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
             <button type="button" className="btn" onClick={onRefresh} disabled={loading}>
               {loading ? 'Syncing…' : 'Refresh'}
             </button>
+            {locked && (
+              <button
+                type="button"
+                className="btn lock"
+                onClick={signOut}
+                title="Sign out"
+                aria-label="Sign out"
+              >
+                <span aria-hidden="true">⎋</span>
+              </button>
+            )}
           </div>
         </header>
 
@@ -158,6 +206,11 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
         .btn:disabled {
           opacity: 0.55;
           cursor: default;
+        }
+        .btn.lock {
+          padding: 6px 10px;
+          font-size: 14px;
+          line-height: 1;
         }
         .tabs {
           display: flex;
