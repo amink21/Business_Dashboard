@@ -142,8 +142,10 @@ export default function RecordFeed({ rows, emptyText, statusOptions, onStatusCha
           border-radius: 7px;
           padding: 1px 3px 1px 1px;
         }
-        .editable:hover {
-          background: var(--surface-2);
+        @media (hover: hover) and (pointer: fine) {
+          .editable:hover {
+            background: var(--surface-2);
+          }
         }
         .editable.saving {
           opacity: 0.5;

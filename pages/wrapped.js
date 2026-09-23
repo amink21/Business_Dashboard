@@ -221,9 +221,11 @@ function Frame({ children }) {
           font-size: 15px;
           line-height: 1;
         }
-        .close:hover {
-          color: var(--ink);
-          background: rgba(255, 255, 255, 0.16);
+        @media (hover: hover) and (pointer: fine) {
+          .close:hover {
+            color: var(--ink);
+            background: rgba(255, 255, 255, 0.16);
+          }
         }
         .card {
           position: relative;

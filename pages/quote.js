@@ -1,31 +1,53 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import Card from '../components/Card';
-import Shell from '../components/Shell';
+import AppShell from '../components/AppShell';
+import Icon from '../components/Icon';
+import Stepper from '../components/Stepper';
 import { fmtMoney } from '../lib/data';
-import { normalize, summarize } from '../lib/print';
+import { normalize, queueBucket, summarize } from '../lib/print';
 
-// Prices a job against what past jobs actually earned per hour of printer time,
-// rather than against a gut feel. Every benchmark here is your own history.
+const RATES = [4, 5, 6, 8];
+
+// Nothing in the sheet prices a gram of filament or a delivery run, so these
+// two are honest placeholders rather than derived facts - adjust them here if
+// they're off for your spool and your driving.
+const FILAMENT_PER_GRAM = 0.025; // ~$25/kg spool
+const DELIVERY_FEE = 12;
+
+function computeQuote({ hours, grams, delivery, rate }) {
+  const printerTime = rate * hours;
+  const filament = grams * FILAMENT_PER_GRAM;
+  const deliveryCost = delivery ? DELIVERY_FEE : 0;
+  const raw = printerTime + filament + deliveryCost;
+  // Rounded up to a clean $5 so the number is easy to say out loud in a reply.
+  const quote = Math.ceil(raw / 5) * 5;
+  const keep = quote - filament - deliveryCost;
+  const perHour = hours ? keep / hours : 0;
+  return { printerTime, filament, deliveryCost, quote, keep, perHour };
+}
+
 export default function Quote() {
   const [raw, setRaw] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  const [hours, setHours] = useState('4');
-  const [material, setMaterial] = useState('5');
-  const [price, setPrice] = useState('40');
+  const [item, setItem] = useState('');
+  const [hours, setHours] = useState(7);
+  const [grams, setGrams] = useState(120);
+  const [delivery, setDelivery] = useState(false);
+  const [rate, setRate] = useState(5);
+
+  const [copied, setCopied] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState(null);
+  const [addedId, setAddedId] = useState(null);
 
   async function load() {
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch('/api/sheet?tab=print');
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load');
-      setRaw(data);
-    } catch (e) {
-      setError(e.message);
+      if (res.ok) setRaw(data);
     } finally {
       setLoading(false);
     }
@@ -37,172 +59,336 @@ export default function Quote() {
 
   const orders = useMemo(() => normalize(raw), [raw]);
   const stats = useMemo(() => summarize(orders), [orders]);
+  const queueBadge = useMemo(() => orders.filter((o) => queueBucket(o.status)).length, [orders]);
 
-  const done = useMemo(
-    () => orders.filter((o) => o.kind === 'completed' && o.hrs > 0),
-    [orders]
-  );
-  const rates = useMemo(
-    () => done.map((o) => o.profit / o.hrs).sort((a, b) => a - b),
-    [done]
-  );
+  const q = useMemo(() => computeQuote({ hours, grams, delivery, rate }), [hours, grams, delivery, rate]);
 
-  const h = Math.max(parseFloat(hours) || 0, 0);
-  const m = Math.max(parseFloat(material) || 0, 0);
-  const p = Math.max(parseFloat(price) || 0, 0);
+  const tone = !stats.medianRate
+    ? 'good'
+    : q.perHour >= stats.medianRate
+      ? 'good'
+      : q.perHour >= stats.medianRate * 0.6
+        ? 'warn'
+        : 'bad';
 
-  const profit = p - m;
-  const rate = h ? profit / h : 0;
-  const margin = p ? (profit / p) * 100 : 0;
+  useEffect(() => {
+    if (!copied) return undefined;
+    const t = setTimeout(() => setCopied(false), 2200);
+    return () => clearTimeout(t);
+  }, [copied]);
 
-  // Where this job would land among the jobs you have already finished.
-  const beats = rates.filter((r) => r < rate).length;
-  const percentile = rates.length ? (beats / rates.length) * 100 : 0;
+  async function copyReply() {
+    const name = item.trim() || 'this print';
+    const text = `${name} comes out to ${fmtMoney(q.quote, true)} — about ${hours}h of print time. Let me know if you want it queued up!`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch (err) {
+      /* clipboard blocked - nothing to fall back to on a phone */
+    }
+  }
 
-  const target = (wanted) => m + wanted * h;
-  const suggestions = [
-    { label: 'Matches your typical job', rate: stats.medianRate },
-    { label: 'Matches your all-in average', rate: stats.profitPerHour },
-    { label: 'Top quarter of your jobs', rate: rates.length ? rates[Math.floor(rates.length * 0.75)] : 0 },
-  ];
-
-  // Past jobs of a similar length, as a sanity check on the number.
-  const similar = useMemo(() => {
-    if (!h) return [];
-    return done
-      .map((o) => ({ o, gap: Math.abs(o.hrs - h) }))
-      .sort((a, b) => a.gap - b.gap)
-      .slice(0, 5)
-      .map(({ o }) => o);
-  }, [done, h]);
-
-  const verdict =
-    !h || !p
-      ? null
-      : rate >= (rates.length ? rates[Math.floor(rates.length * 0.75)] : 0)
-        ? { tone: 'good', text: 'Strong job. Better than three quarters of what you have printed.' }
-        : rate >= stats.medianRate
-          ? { tone: 'good', text: 'Above your typical rate. Worth taking.' }
-          : rate >= stats.medianRate * 0.6
-            ? { tone: 'warn', text: 'Below your typical rate. Fine as a favour, thin as a business.' }
-            : { tone: 'bad', text: 'This is a Ford Bronco. Long print, small money — raise it or pass.' };
+  async function addToQueue() {
+    if (!item.trim() || adding) return;
+    setAdding(true);
+    setAddError(null);
+    setAddedId(null);
+    try {
+      const res = await fetch('/api/order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          item: item.trim(),
+          hours,
+          materialCost: q.filament,
+          deliveryCost: q.deliveryCost,
+          price: q.quote,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not add to queue.');
+      setAddedId(body.orderId || 'the queue');
+    } catch (e) {
+      setAddError(e.message);
+    } finally {
+      setAdding(false);
+    }
+  }
 
   return (
     <>
       <Head>
-        <title>Quote — Print Lab</title>
+        <title>Quote — Hustle Desk</title>
       </Head>
 
-      <Shell path="/quote" loading={loading} onRefresh={load}>
-        {error && <div className="error">{error}</div>}
+      <AppShell kicker="3D PRINT" title="Quote" queueBadge={queueBadge}>
+        <section className="form">
+          <label className="row">
+            <span className="rLabel">Item</span>
+            <input
+              type="text"
+              className="itemInput"
+              placeholder="e.g. Porsche Spoiler Shelf"
+              value={item}
+              onChange={(e) => setItem(e.target.value)}
+            />
+          </label>
 
-        <div className="intro">
-          Price a job against your own history: {done.length} finished prints, a typical{' '}
-          {fmtMoney(stats.medianRate, true)} per printer hour.
+          <div className="row">
+            <span className="rLabel">Print time</span>
+            <Stepper value={hours} onChange={setHours} step={0.5} unit="h" decimals={hours % 1 ? 1 : 0} />
+          </div>
+
+          <div className="row">
+            <span className="rLabel">Filament</span>
+            <Stepper value={grams} onChange={setGrams} step={10} unit="g" />
+          </div>
+
+          <div className="row last">
+            <span className="rLabel">Delivery</span>
+            <button
+              type="button"
+              className={`toggle ${delivery ? 'on' : ''}`}
+              role="switch"
+              aria-checked={delivery}
+              aria-label="Include delivery"
+              onClick={() => setDelivery((v) => !v)}
+            >
+              <span className="knob" />
+            </button>
+          </div>
+        </section>
+
+        <div className="rateLabel">Rate per printer hour</div>
+        <div className="rates">
+          {RATES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={`rate ${rate === r ? 'on' : ''}`}
+              aria-pressed={rate === r}
+              onClick={() => setRate(r)}
+            >
+              {fmtMoney(r)}
+            </button>
+          ))}
         </div>
 
-        <div className="two">
-          <Card title="The job">
-            <div className="fields">
-              <label className="field">
-                <span>Print hours</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={hours}
-                  onChange={(e) => setHours(e.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Material + other cost</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={material}
-                  onChange={(e) => setMaterial(e.target.value)}
-                />
-              </label>
-              <label className="field">
-                <span>Your price</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="5"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                />
-              </label>
+        <section className="result">
+          <div className="rTop">
+            <div>
+              <div className="rLabel2">Quote</div>
+              <div className="rBig">{fmtMoney(q.quote)}</div>
             </div>
+            <span className={`perHr ${tone}`}>{fmtMoney(q.perHour, true)}/hr</span>
+          </div>
 
-            <div className="result">
-              <div className="big">
-                <span className={`rate ${verdict ? verdict.tone : ''}`}>
-                  {fmtMoney(rate, true)}
-                </span>
-                <span className="per">per printer hour</span>
-              </div>
-              <div className="line">
-                {fmtMoney(profit, true)} profit · {margin.toFixed(0)}% margin ·{' '}
-                {percentile.toFixed(0)}
-                <span className="ord">th</span> percentile of your jobs
-              </div>
-              {verdict && <div className={`verdict ${verdict.tone}`}>{verdict.text}</div>}
+          <div className="rRows">
+            <div className="rRow">
+              <span>Printer time</span>
+              <span>{fmtMoney(q.printerTime, true)}</span>
             </div>
-          </Card>
+            <div className="rRow">
+              <span>Filament</span>
+              <span>{fmtMoney(q.filament, true)}</span>
+            </div>
+            <div className="rRow">
+              <span>Delivery</span>
+              <span>{fmtMoney(q.deliveryCost, true)}</span>
+            </div>
+          </div>
 
-          <Card title="What to charge" note="to hit each benchmark">
-            <ul className="targets">
-              {suggestions.map((s) => (
-                <li key={s.label}>
-                  <span className="tLabel">
-                    {s.label}
-                    <span className="tRate">{fmtMoney(s.rate, true)}/hr</span>
-                  </span>
-                  <button
-                    type="button"
-                    className="tPrice"
-                    onClick={() => setPrice(String(Math.ceil(target(s.rate))))}
-                    title="Use this price"
-                  >
-                    {fmtMoney(target(s.rate), true)}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p className="hint">
-              Prices cover {h || 0} h of printing plus {fmtMoney(m, true)} of material. Tap one to
-              load it above.
-            </p>
-          </Card>
+          <div className="rKeep">
+            <span>You keep</span>
+            <span className="keepVal">{fmtMoney(q.keep, true)}</span>
+          </div>
+        </section>
+
+        {addError && <div className="error">{addError}</div>}
+        {addedId && (
+          <div className="success">
+            Added as {addedId}. <Link href="/queue">View in Queue →</Link>
+          </div>
+        )}
+
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={copyReply}>
+            <Icon name="copy" size={16} />
+            {copied ? 'Copied' : 'Copy reply'}
+          </button>
+          <button type="button" className="btn solid" onClick={addToQueue} disabled={!item.trim() || adding || loading}>
+            {adding ? 'Adding…' : 'Add to queue'}
+          </button>
         </div>
-
-        <Card title="Jobs of a similar length" note={h ? `nearest to ${h} h` : 'enter hours'} flush>
-          {similar.length ? (
-            <ul className="similar">
-              {similar.map((o) => {
-                const r = o.profit / o.hrs;
-                return (
-                  <li key={o.id}>
-                    <span className="sItem">{o.item}</span>
-                    <span className="sMeta">
-                      {o.hrs} h · {fmtMoney(o.sale, true)}
-                    </span>
-                    <span className={`sRate ${r >= stats.medianRate ? 'good' : 'warn'}`}>
-                      {fmtMoney(r, true)}/hr
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="empty">{loading ? 'Loading your history…' : 'No comparable jobs.'}</div>
-          )}
-        </Card>
-      </Shell>
+      </AppShell>
 
       <style jsx>{`
+        .form {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 4px 16px;
+          margin: 6px 0 18px;
+        }
+        .row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 14px 0;
+          border-bottom: 1px solid var(--line);
+        }
+        .row.last {
+          border-bottom: none;
+        }
+        .rLabel {
+          font-size: 14px;
+          color: var(--ink-2);
+          flex-shrink: 0;
+        }
+        .itemInput {
+          flex: 1;
+          min-width: 0;
+          background: none;
+          border: none;
+          color: var(--ink);
+          font-size: 14px;
+          text-align: right;
+        }
+        .itemInput::placeholder {
+          color: var(--muted);
+        }
+        .toggle {
+          width: 46px;
+          height: 27px;
+          border-radius: 14px;
+          background: var(--surface-3);
+          border: 1px solid var(--line);
+          padding: 2px;
+          display: flex;
+          align-items: center;
+          flex-shrink: 0;
+          transition: background 140ms ease;
+        }
+        .toggle:active .knob {
+          width: 24px;
+        }
+        .toggle.on {
+          background: var(--accent);
+          border-color: var(--accent);
+          justify-content: flex-end;
+        }
+        .knob {
+          width: 21px;
+          height: 21px;
+          border-radius: 50%;
+          background: #fff;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+          transition: width 140ms ease;
+        }
+        .rateLabel {
+          font-size: 12.5px;
+          color: var(--muted);
+          margin-bottom: 8px;
+        }
+        .rates {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+          margin-bottom: 18px;
+        }
+        .rate {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          color: var(--ink-2);
+          font-size: 13.5px;
+          font-weight: 650;
+          padding: 10px 0;
+          border-radius: 10px;
+          transition: transform 120ms ease;
+        }
+        .rate:active {
+          transform: scale(0.94);
+        }
+        .rate.on {
+          background: var(--accent-wash);
+          border-color: var(--accent-dim);
+          color: var(--accent);
+        }
+        .result {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 16px;
+          margin-bottom: 14px;
+        }
+        .rTop {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .rLabel2 {
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          color: var(--muted);
+        }
+        .rBig {
+          font-size: 34px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          color: var(--ink);
+          margin-top: 4px;
+          font-variant-numeric: tabular-nums;
+        }
+        .perHr {
+          font-size: 12px;
+          font-weight: 650;
+          padding: 5px 10px;
+          border-radius: 999px;
+          margin-top: 2px;
+          white-space: nowrap;
+        }
+        .perHr.good {
+          color: var(--accent);
+          background: var(--accent-wash);
+        }
+        .perHr.warn {
+          color: var(--warning);
+          background: rgba(250, 178, 25, 0.14);
+        }
+        .perHr.bad {
+          color: var(--critical);
+          background: rgba(208, 59, 59, 0.14);
+        }
+        .rRows {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          margin-top: 16px;
+          font-size: 13px;
+          color: var(--muted);
+        }
+        .rRow {
+          display: flex;
+          justify-content: space-between;
+        }
+        .rKeep {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px solid var(--line);
+          font-size: 14px;
+          color: var(--ink-2);
+        }
+        .keepVal {
+          color: var(--accent);
+          font-weight: 700;
+        }
         .error {
           background: rgba(208, 59, 59, 0.12);
           border: 1px solid rgba(208, 59, 59, 0.35);
@@ -210,198 +396,53 @@ export default function Quote() {
           font-size: 12.5px;
           border-radius: 9px;
           padding: 10px 12px;
-          margin-bottom: 14px;
-        }
-        .intro {
-          font-size: 12.5px;
-          color: var(--muted);
-          margin-bottom: 14px;
-        }
-        .two {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          align-items: start;
-          gap: 12px;
           margin-bottom: 12px;
         }
-        .fields {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-        .field {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          font-size: 12.5px;
-          color: var(--ink-2);
-        }
-        .field input {
-          width: 110px;
-          background: var(--surface-2);
-          border: 1px solid var(--line);
-          border-radius: 8px;
-          color: var(--ink);
-          font-size: 13px;
-          padding: 7px 10px;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-        }
-        .result {
-          margin-top: 16px;
-          padding-top: 14px;
-          border-top: 1px solid var(--line);
-        }
-        .big {
-          display: flex;
-          align-items: baseline;
-          gap: 8px;
-        }
-        .rate {
-          font-size: 34px;
-          font-weight: 680;
-          letter-spacing: -0.02em;
-          color: var(--ink);
-        }
-        .rate.good {
-          color: var(--accent);
-        }
-        .rate.warn {
-          color: var(--warning);
-        }
-        .rate.bad {
-          color: var(--critical);
-        }
-        .per {
-          font-size: 12px;
-          color: var(--muted);
-        }
-        .line {
-          font-size: 12px;
-          color: var(--muted);
-          margin-top: 6px;
-          font-variant-numeric: tabular-nums;
-        }
-        .ord {
-          font-variant-numeric: normal;
-        }
-        .verdict {
-          font-size: 12.5px;
-          margin-top: 10px;
-          padding: 8px 10px;
-          border-radius: 8px;
-          line-height: 1.4;
-        }
-        .verdict.good {
-          color: var(--accent);
+        .success {
           background: var(--accent-wash);
+          border: 1px solid var(--accent-dim);
+          color: var(--accent);
+          font-size: 12.5px;
+          border-radius: 9px;
+          padding: 10px 12px;
+          margin-bottom: 12px;
         }
-        .verdict.warn {
-          color: var(--warning);
-          background: rgba(250, 178, 25, 0.12);
+        .success :global(a) {
+          color: inherit;
+          font-weight: 650;
         }
-        .verdict.bad {
-          color: var(--critical);
-          background: rgba(208, 59, 59, 0.12);
-        }
-        .targets {
-          list-style: none;
-          margin: 0;
-          padding: 0;
+        .actions {
           display: flex;
-          flex-direction: column;
           gap: 10px;
+          padding-bottom: 8px;
         }
-        .targets li {
+        .btn {
+          flex: 1;
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-        }
-        .tLabel {
-          display: flex;
-          flex-direction: column;
-          font-size: 12.5px;
-          color: var(--ink-2);
-          min-width: 0;
-        }
-        .tRate {
-          font-size: 11px;
-          color: var(--muted);
-          font-variant-numeric: tabular-nums;
-        }
-        .tPrice {
-          background: var(--surface-2);
-          border: 1px solid var(--line);
-          color: var(--ink);
-          border-radius: 8px;
-          padding: 6px 12px;
+          justify-content: center;
+          gap: 8px;
+          border-radius: 12px;
+          padding: 13px 0;
           font-size: 14px;
           font-weight: 650;
-          font-variant-numeric: tabular-nums;
-          flex-shrink: 0;
+          transition: transform 120ms ease;
         }
-        .tPrice:hover {
-          border-color: var(--accent);
-          color: var(--accent);
+        .btn:active:not(:disabled) {
+          transform: scale(0.97);
         }
-        .hint {
-          font-size: 11px;
-          color: var(--muted);
-          margin: 14px 0 0;
-          line-height: 1.5;
-        }
-        .similar {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-        }
-        .similar li {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto 90px;
-          gap: 12px;
-          align-items: center;
-          padding: 11px 15px;
-          border-bottom: 1px solid var(--line);
-        }
-        .similar li:last-child {
-          border-bottom: none;
-        }
-        .sItem {
-          font-size: 13px;
+        .btn.ghost {
+          background: var(--surface-2);
+          border: 1px solid var(--line);
           color: var(--ink);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
-        .sMeta {
-          font-size: 11.5px;
-          color: var(--muted);
-          font-variant-numeric: tabular-nums;
+        .btn.solid {
+          background: var(--ink);
+          color: #0a0a0b;
+          border: none;
         }
-        .sRate {
-          font-size: 12.5px;
-          font-weight: 650;
-          text-align: right;
-          font-variant-numeric: tabular-nums;
-        }
-        .sRate.good {
-          color: var(--accent);
-        }
-        .sRate.warn {
-          color: var(--warning);
-        }
-        .empty {
-          text-align: center;
-          color: var(--muted);
-          font-size: 13px;
-          padding: 36px 0;
-        }
-        @media (max-width: 860px) {
-          .two {
-            grid-template-columns: minmax(0, 1fr);
-          }
+        .btn.solid:disabled {
+          opacity: 0.4;
         }
       `}</style>
     </>

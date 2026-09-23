@@ -11,4 +11,10 @@ const lanOrigins = Object.values(os.networkInterfaces())
 /** @type {import('next').NextConfig} */
 module.exports = {
   allowedDevOrigins: Array.from(new Set(lanOrigins)),
+  async redirects() {
+    // The charger desk used to be its own page; its numbers now live in the
+    // Chargers tab of /stats. Kept as a redirect so old links and the home
+    // screen shortcut still land somewhere real.
+    return [{ source: '/tesla', destination: '/stats?tab=chargers', permanent: false }];
+  },
 };

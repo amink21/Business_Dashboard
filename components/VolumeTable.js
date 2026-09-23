@@ -44,6 +44,7 @@ export default function VolumeTable({ points }) {
           overflow-x: auto;
           max-height: 256px;
           overflow-y: auto;
+          overscroll-behavior: contain;
         }
         table {
           width: 100%;

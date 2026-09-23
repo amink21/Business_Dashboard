@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const SHOW_MS = 4600;
+// Matches the .hide transition below - long enough to read as a real exit,
+// short enough that a second tap on "New alert" doesn't feel delayed.
+const HIDE_MS = 220;
 
 // One lock-screen alert per visit, picked at random from the pool of real
 // moments in the sheet - so a reload brings a different (still true) headline.
 export default function AlertToast({ alerts, nonce, app, mark }) {
   const [current, setCurrent] = useState(null);
-  const timer = useRef(null);
+  const [hiding, setHiding] = useState(false);
+  const showTimer = useRef(null);
+  const hideTimer = useRef(null);
   const lastId = useRef(null);
 
   // The pool is read through a ref so the alert fires only when `nonce` changes -
@@ -14,8 +19,21 @@ export default function AlertToast({ alerts, nonce, app, mark }) {
   const poolRef = useRef(alerts);
   poolRef.current = alerts;
 
+  // Dismissing plays the reverse of the entrance instead of vanishing: the
+  // toast dropped in from the top, so it leaves the same way.
+  const dismiss = useCallback(() => {
+    clearTimeout(showTimer.current);
+    setHiding(true);
+    hideTimer.current = setTimeout(() => {
+      setCurrent(null);
+      setHiding(false);
+    }, HIDE_MS);
+  }, []);
+
   useEffect(() => {
-    clearTimeout(timer.current);
+    clearTimeout(showTimer.current);
+    clearTimeout(hideTimer.current);
+    setHiding(false);
     setCurrent(null);
     if (!nonce) return undefined;
 
@@ -31,18 +49,21 @@ export default function AlertToast({ alerts, nonce, app, mark }) {
     lastId.current = pick.id;
 
     setCurrent(pick);
-    timer.current = setTimeout(() => setCurrent(null), SHOW_MS);
-    return () => clearTimeout(timer.current);
-  }, [nonce]);
+    showTimer.current = setTimeout(dismiss, SHOW_MS);
+    return () => {
+      clearTimeout(showTimer.current);
+      clearTimeout(hideTimer.current);
+    };
+  }, [nonce, dismiss]);
 
   return (
     <div className="dock" role="status" aria-live="polite">
       {current && (
         <button
           type="button"
-          className="toast"
+          className={`toast ${hiding ? 'hide' : ''}`}
           key={current.id + String(nonce)}
-          onClick={() => setCurrent(null)}
+          onClick={dismiss}
         >
           <span className="icon" aria-hidden="true">
             {mark}
@@ -85,6 +106,11 @@ export default function AlertToast({ alerts, nonce, app, mark }) {
           -webkit-backdrop-filter: blur(18px);
           box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
           animation: drop 280ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
+          transition: opacity 200ms var(--ease-in-out), transform 200ms var(--ease-in-out);
+        }
+        .toast.hide {
+          opacity: 0;
+          transform: translateY(-14px) scale(0.97);
         }
         @keyframes drop {
           from {

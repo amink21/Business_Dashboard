@@ -31,12 +31,25 @@
   --warning: #fab219;
   --critical: #d03b3b;
 
+  /* The two hustles, used only where a figure is explicitly split between them
+     (the home screen's split bar and revenue chart, the stats segmented tabs).
+     Everywhere a single business line reports on itself, it still uses --accent. */
+  --chargers: #4c8dff;
+  --chargers-wash: rgba(76, 141, 255, 0.14);
+  --prints: #b57bf2;
+  --prints-wash: rgba(181, 123, 242, 0.14);
+
   --light-red: #ff5f57;
   --light-amber: #febc2e;
   --light-green: #28c840;
 
   --radius: 12px;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Shared motion vocabulary - every deliberate (non-micro) animation in the
+     app draws its curve from here rather than a hand-rolled bezier. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 * {
@@ -51,6 +64,18 @@ body {
   color: var(--ink);
   font-family: var(--sans);
   -webkit-font-smoothing: antialiased;
+  /* No font inflation when an installed PWA rotates to landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
+html {
+  /* This is an app shell with its own tab bars and sheets, not a document -
+     pull-to-refresh and the iOS rubber-band would fight both. */
+  overscroll-behavior: none;
+  /* The translucent gray flash Safari/Chrome paint on tap - the loudest
+     "this is a website" tell there is. Every tappable element gets its own
+     :active feedback instead. */
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -60,15 +85,73 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+  /* Every button in the app inherits the native-app touch feel from here:
+     no double-tap-zoom delay, no text selection or share callout on a
+     long-press, no lingering tap highlight (killed globally below). */
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The nav tabs, the home-screen hustle tiles and the Wrapped close button are
+   <a> elements standing in for app chrome, not content links - they get the
+   same touch treatment as a real <button>. Both are `<style jsx global>` in
+   their own files, so the plain class names land here unscoped. */
+.tab,
+.hustleTile,
+.close {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 input {
   font-family: inherit;
 }
 
+/* iOS Safari zooms the page when a focused input's font is under 16px and
+   never zooms back out on blur. Desktop keeps its tighter type; touch input
+   gets the safe minimum instead of triggering that zoom. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Browser surfaces nobody explicitly draws still carry the design - a themed
+   selection and scrollbar read as built, not assembled. */
+::selection {
+  background: var(--accent-dim);
+  color: var(--ink);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--baseline) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--baseline);
+  border-radius: 999px;
+  border: 2px solid var(--plane);
 }
 
 @media (prefers-reduced-motion: reduce) {

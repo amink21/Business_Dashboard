@@ -7,7 +7,7 @@ import { fmtMonth, fmtMoney } from '../lib/data';
 //
 // This is the emphasis form: the measure that matters wears the accent, its
 // context wears the de-emphasis neutral. No second hue is needed.
-const SERIES = [
+const DEFAULT_SERIES = [
   { key: 'profit', label: 'Net profit', color: 'var(--accent)' },
   { key: 'cost', label: 'Cost', color: 'var(--series-mute)' },
 ];
@@ -20,7 +20,8 @@ function niceMax(v) {
   return step * mag;
 }
 
-export default function StackedColumnChart({ data }) {
+export default function StackedColumnChart({ data, series }) {
+  const SERIES = series || DEFAULT_SERIES;
   const [hover, setHover] = useState(null);
   const totals = data.map((d) => d.segments.reduce((s, v) => s + v, 0));
   const max = niceMax(Math.max(...totals, 0));

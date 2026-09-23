@@ -38,16 +38,22 @@
   ],
   "shortcuts": [
     {
-      "name": "3D Printing",
-      "short_name": "Printing",
-      "url": "/",
+      "name": "Queue",
+      "short_name": "Queue",
+      "url": "/queue",
       "description": "Print orders, pipeline and printer hours"
     },
     {
       "name": "Tesla Chargers",
       "short_name": "Chargers",
-      "url": "/tesla",
+      "url": "/stats?tab=chargers",
       "description": "Charger inventory, stock cover and sell-through"
+    },
+    {
+      "name": "Quote",
+      "short_name": "Quote",
+      "url": "/quote",
+      "description": "Price a job against your own history"
     }
   ]
 }

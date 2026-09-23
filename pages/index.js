@@ -1,76 +1,63 @@
 import Head from 'next/head';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import BarChart from '../components/BarChart';
-import Card from '../components/Card';
-import ProfitCalendar from '../components/ProfitCalendar';
-import FilterRow from '../components/FilterRow';
-import RecordFeed from '../components/RecordFeed';
+import AppShell from '../components/AppShell';
 import AlertToast from '../components/AlertToast';
-import Shell from '../components/Shell';
+import Card from '../components/Card';
+import HustleTile from '../components/HustleTile';
+import IconButton from '../components/IconButton';
+import NeedsYouList from '../components/NeedsYouList';
+import PaymentsList from '../components/PaymentsList';
+import RangeTabs from '../components/RangeTabs';
+import Skeleton from '../components/Skeleton';
 import StackedColumnChart from '../components/StackedColumnChart';
-import StatTile from '../components/StatTile';
-import VolumePanel from '../components/VolumePanel';
-import {
-  cumulativeSeries,
-  dailySeries,
-  fmtDate,
-  fmtMoney,
-  inBounds,
-  pctChange,
-  rangeBounds,
-  shiftBounds,
-  sparkSeries,
-  topBy,
-} from '../lib/data';
-import { printAlerts } from '../lib/alerts';
-import { lookupMetric, monthlyStack, normalize, pipelineBars, summarize } from '../lib/print';
+import SplitBar from '../components/SplitBar';
+import { fmtMoney, inBounds, rangeBounds } from '../lib/data';
+import { printAlerts, teslaAlerts } from '../lib/alerts';
+import { combineMonthly, combineStats, latestActivity, needsYou } from '../lib/home';
+import { monthlyStack as printMonthlyStack, normalize as normalizePrint, queueBucket, summarize as summarizePrint } from '../lib/print';
+import { monthlyStack as teslaMonthlyStack, normalize as normalizeTesla, summarize as summarizeTesla } from '../lib/tesla';
+import { useCountUp } from '../lib/useCountUp';
 
-// Must match ALLOWED_STATUSES in google-apps-script/Code.gs.
-const STATUS_OPTIONS = [
-  'Need to Print',
-  'Printed',
-  'Waiting for Pickup',
-  'Completed',
-  'Cancelled',
+const CHARGERS_PRINTS_SERIES = [
+  { key: 'chargers', label: 'Chargers', color: 'var(--chargers)' },
+  { key: 'prints', label: 'Prints', color: 'var(--prints)' },
 ];
 
-export default function PrintOverview() {
-  const [raw, setRaw] = useState([]);
+export default function Home() {
+  const [rawPrint, setRawPrint] = useState([]);
+  const [rawTesla, setRawTesla] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [syncedAt, setSyncedAt] = useState(null);
   const [stale, setStale] = useState(false);
-  const [equipment, setEquipment] = useState(undefined);
-  const [savingKey, setSavingKey] = useState(null);
-  const [writeError, setWriteError] = useState(null);
-
   const [rangeId, setRangeId] = useState('all');
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('All');
   const [nonce, setNonce] = useState(0);
+  const [kicker, setKicker] = useState('');
+
+  useEffect(() => {
+    setKicker(
+      new Date()
+        .toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
+        .toUpperCase()
+    );
+  }, []);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/sheet?tab=print');
-      // The service worker tags a response it served from cache while offline.
-      setStale(res.headers.get('x-from-cache') === '1');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load');
-      setRaw(data);
+      const [p, t] = await Promise.all([
+        fetch('/api/sheet?tab=print'),
+        fetch('/api/sheet?tab=tesla'),
+      ]);
+      setStale(p.headers.get('x-from-cache') === '1' || t.headers.get('x-from-cache') === '1');
+      const [pData, tData] = await Promise.all([p.json(), t.json()]);
+      if (!p.ok) throw new Error(pData.error || 'Failed to load prints');
+      if (!t.ok) throw new Error(tData.error || 'Failed to load chargers');
+      setRawPrint(pData);
+      setRawTesla(tData);
       setSyncedAt(new Date());
-
-      // Equipment spend lives on the summary tab as a labelled cell. It is a
-      // second-class fetch: if it fails the rest of the page is still correct.
-      try {
-        const sum = await fetch('/api/sheet?tab=printSummary&raw=1');
-        const body = await sum.json();
-        setEquipment(sum.ok ? lookupMetric(body.rows, 'Total Equipment & Filament Spent') : null);
-      } catch {
-        setEquipment(null);
-      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -82,347 +69,123 @@ export default function PrintOverview() {
     load();
   }, []);
 
-  // Writing back to the sheet. The row updates on screen first and rolls back if
-  // the sheet refuses, so a tap feels instant but never lies about what landed.
-  async function saveStatus(row, status) {
-    const previous = raw;
-    setSavingKey(row.key);
-    setWriteError(null);
-    setRaw((rows) =>
-      rows.map((r) => (r['Order ID'] === row.key ? { ...r, Status: status } : r))
-    );
+  const orders = useMemo(() => normalizePrint(rawPrint), [rawPrint]);
+  const items = useMemo(() => normalizeTesla(rawTesla), [rawTesla]);
 
-    const post = (pin) =>
-      fetch('/api/order', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(pin ? { 'x-dashboard-pin': pin } : {}),
-        },
-        body: JSON.stringify({ orderId: row.key, status }),
-      });
+  const printStatsFull = useMemo(() => summarizePrint(orders), [orders]);
+  const bounds = useMemo(() => rangeBounds([...orders, ...items], rangeId), [orders, items, rangeId]);
 
-    try {
-      let stored = null;
-      try {
-        stored = window.localStorage.getItem('dashboardPin');
-      } catch (err) {
-        stored = null;
-      }
+  const scopedOrders = useMemo(() => orders.filter((o) => inBounds(o, bounds)), [orders, bounds]);
+  const scopedItems = useMemo(() => items.filter((i) => inBounds(i, bounds)), [items, bounds]);
 
-      let res = await post(stored);
+  const printStats = useMemo(() => summarizePrint(scopedOrders), [scopedOrders]);
+  const teslaStats = useMemo(() => summarizeTesla(scopedItems), [scopedItems]);
+  const combined = useMemo(() => combineStats(printStats, teslaStats), [printStats, teslaStats]);
+  const displayNet = useCountUp(combined.net);
 
-      // A PIN is only configured on some deployments, so ask for it lazily -
-      // the first time the server actually demands one.
-      if (res.status === 401) {
-        const entered = window.prompt('PIN required to change orders');
-        if (!entered) throw new Error('Cancelled.');
-        try {
-          window.localStorage.setItem('dashboardPin', entered);
-        } catch (err) {
-          /* private mode - it just asks again next time */
-        }
-        res = await post(entered);
-      }
-
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Could not save.');
-      setSyncedAt(new Date());
-    } catch (e) {
-      setRaw(previous);
-      setWriteError(e.message);
-    } finally {
-      setSavingKey(null);
-    }
-  }
-
-  const orders = useMemo(() => normalize(raw), [raw]);
-  const bounds = useMemo(() => rangeBounds(orders, rangeId), [orders, rangeId]);
-
-  const scoped = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return orders.filter((o) => {
-      if (!inBounds(o, bounds)) return false;
-      if (status !== 'All' && o.status !== status) return false;
-      if (!q) return true;
-      return `${o.id} ${o.customer} ${o.item} ${o.platform}`.toLowerCase().includes(q);
-    });
-  }, [orders, bounds, status, search]);
-
-  const stats = useMemo(() => summarize(scoped), [scoped]);
-  const points = useMemo(
+  const monthly = useMemo(
     () =>
-      cumulativeSeries(
-        scoped,
-        bounds,
-        (o) => o.date,
-        (o) => (o.kind === 'completed' ? o.sale : 0)
+      combineMonthly(
+        teslaMonthlyStack(scopedItems, bounds),
+        printMonthlyStack(scopedOrders, bounds)
       ),
-    [scoped, bounds]
+    [scopedItems, scopedOrders, bounds]
   );
 
-  // The window immediately before this one. "All time" has nothing before it, so
-  // it shows no delta rather than a made-up one.
-  const prev = useMemo(() => {
-    const pb = shiftBounds(bounds);
-    if (!pb) return null;
-    return summarize(orders.filter((o) => inBounds(o, pb)));
-  }, [orders, bounds]);
+  const needs = useMemo(() => needsYou(orders, items, printStatsFull), [orders, items, printStatsFull]);
+  const queueBadge = useMemo(() => orders.filter((o) => queueBucket(o.status)).length, [orders]);
+  const activity = useMemo(() => latestActivity(scopedOrders, scopedItems, 5), [scopedOrders, scopedItems]);
 
-  const calendar = useMemo(
-    () => dailySeries(scoped, bounds, (o) => o.date, (o) => (o.kind === 'completed' ? o.profit : 0)),
-    [scoped, bounds]
+  const alerts = useMemo(
+    () => [...printAlerts(scopedOrders, printStats), ...teslaAlerts(scopedItems, teslaStats)],
+    [scopedOrders, printStats, scopedItems, teslaStats]
   );
-  const months = useMemo(() => monthlyStack(scoped, bounds), [scoped, bounds]);
-  const pipeline = useMemo(() => pipelineBars(scoped), [scoped]);
-  const topItems = useMemo(
-    () =>
-      topBy(
-        scoped.filter((o) => o.kind === 'completed'),
-        (o) => o.item,
-        (o) => o.profit,
-        8
-      ),
-    [scoped]
-  );
-  const topCustomers = useMemo(
-    () =>
-      topBy(
-        scoped.filter((o) => o.kind === 'completed'),
-        (o) => o.customer,
-        (o) => o.profit,
-        6
-      ),
-    [scoped]
-  );
-
-  const profitSpark = useMemo(
-    () => sparkSeries(scoped, bounds, (o) => (o.kind === 'completed' ? o.profit : 0)),
-    [scoped, bounds]
-  );
-  const orderSpark = useMemo(() => sparkSeries(scoped, bounds, () => 1), [scoped, bounds]);
-  const hoursSpark = useMemo(() => sparkSeries(scoped, bounds, (o) => o.hrs), [scoped, bounds]);
-
-  const statuses = useMemo(
-    () => ['All', ...Array.from(new Set(orders.map((o) => o.status).filter(Boolean)))],
-    [orders]
-  );
-
-  const alerts = useMemo(() => printAlerts(scoped, stats), [scoped, stats]);
 
   useEffect(() => {
-    if (!loading && raw.length && nonce === 0) setNonce(1);
-  }, [loading, raw.length, nonce]);
-
-  const feed = useMemo(
-    () =>
-      scoped
-        .slice()
-        .reverse()
-        .map((o) => ({
-          key: o.id || `${o.customer}-${o.item}`,
-          // Status writes address a row by its Order ID, so a row without one
-          // can be read but not edited - better than posting a made-up id.
-          editable: Boolean(o.id),
-          badge: (o.customer || '?').trim().charAt(0).toUpperCase() || '?',
-          title: o.item,
-          meta: [o.customer || 'No customer', o.platform, o.delivery].filter(Boolean).join(' · '),
-          kind: o.kind,
-          status: o.status,
-          amount: o.sale,
-          sub: o.profit ? `${fmtMoney(o.profit, true)} net` : `${o.hrs || 0}h print`,
-          date: o.date,
-        })),
-    [scoped]
-  );
-
-  const rangeLabel = bounds
-    ? `${fmtDate(bounds.from, true)} – ${fmtDate(bounds.to, true)}`
-    : 'No dated orders';
+    if (!loading && (rawPrint.length || rawTesla.length) && nonce === 0) setNonce(1);
+  }, [loading, rawPrint.length, rawTesla.length, nonce]);
 
   return (
     <>
       <Head>
-        <title>Print Lab</title>
+        <title>Hustle Desk</title>
       </Head>
-      <AlertToast alerts={alerts} nonce={nonce} app="PRINT LAB" mark="🖨️" />
+      <AlertToast alerts={alerts} nonce={nonce} app="HUSTLE DESK" mark="🖨️" />
 
-      <Shell
-        path="/printing"
-        loading={loading}
-        onRefresh={load}
+      <AppShell
+        kicker={kicker}
+        title="Hustle Desk"
         onAlert={() => setNonce((n) => n + 1)}
-        dim={loading && raw.length > 0}
+        queueBadge={queueBadge}
+        actions={<IconButton name="refresh" label="Refresh" onClick={load} disabled={loading} />}
       >
         {error && <div className="error">{error}</div>}
-        {writeError && (
-          <div className="error">
-            {writeError}{' '}
-            <button type="button" className="dismiss" onClick={() => setWriteError(null)}>
-              Dismiss
-            </button>
+
+        <RangeTabs value={rangeId} onChange={setRangeId} />
+
+        <section className="hero">
+          <div className="label">Net profit · both hustles</div>
+          <div className="value">{fmtMoney(displayNet, true)}</div>
+          <div className="sub">
+            on {fmtMoney(combined.gross, true)} gross · {combined.margin.toFixed(1)}% margin
           </div>
-        )}
+          <div className="splitWrap">
+            <SplitBar chargersPct={combined.chargersShare} printsPct={combined.printsShare} />
+          </div>
+        </section>
 
-        <FilterRow
-          rangeId={rangeId}
-          onRange={setRangeId}
-          search={search}
-          onSearch={setSearch}
-          status={status}
-          onStatus={setStatus}
-          statuses={statuses}
-          placeholder="Search customer, item, order ID…"
-        />
-
-        <VolumePanel
-          label="Gross volume"
-          value={stats.gross}
-          delta={prev ? pctChange(stats.gross, prev.gross) : null}
-          deltaLabel={bounds && bounds.days ? `vs prior ${bounds.days}d` : ''}
-          sub={`${stats.completed} succeeded · ${rangeLabel}`}
-          points={points}
-        />
-
-        <div className="kpis">
-          <StatTile
-            label="Net profit"
-            value={fmtMoney(stats.net, true)}
-            tone="accent"
-            sub="after material + other costs"
-            delta={prev ? pctChange(stats.net, prev.net) : null}
-            points={profitSpark}
-          />
-          <StatTile
-            label="Margin"
-            value={`${stats.margin.toFixed(1)}%`}
-            sub={`${fmtMoney(stats.cogs, true)} spent on materials`}
-          />
-          <StatTile
-            label="Avg order"
-            value={fmtMoney(stats.avgOrder, true)}
-            sub={`across ${stats.completed} completed`}
-          />
-          <StatTile
-            label="Profit / print hour"
-            value={fmtMoney(stats.profitPerHour, true)}
-            sub="what an hour of printer time earns"
-          />
-          <StatTile
-            label="Pipeline value"
-            value={fmtMoney(stats.pipelineValue, true)}
-            sub={`${stats.pipeline} orders not yet closed`}
-            points={orderSpark}
-          />
-          <StatTile
-            label="Cancel rate"
-            value={`${stats.cancelRate.toFixed(0)}%`}
-            sub={`${stats.cancelled} of ${stats.count} orders`}
-          />
-          <StatTile
-            label="Repeat customers"
-            value={String(stats.repeat)}
-            sub={`of ${stats.customers} people`}
-          />
-          <StatTile
-            label="Print hours"
-            value={stats.hours.toFixed(1)}
-            sub={stats.count ? `${(stats.hours / stats.count).toFixed(1)} h per order` : 'no orders'}
-            points={hoursSpark}
-          />
-          <StatTile
-            label="After equipment"
-            value={equipment ? fmtMoney(stats.net - equipment, true) : '—'}
-            tone={equipment ? (stats.net - equipment >= 0 ? 'accent' : 'critical') : undefined}
-            sub={
-              equipment
-                ? `${fmtMoney(equipment, true)} on printer + filament`
-                : equipment === undefined
-                  ? 'reading the summary tab…'
-                  : 'summary tab unavailable'
-            }
-          />
-          <StatTile
-            label="Typical rate"
-            value={`${fmtMoney(stats.medianRate, true)}/hr`}
-            sub="median job — half earn less per printer hour"
-          />
-          <StatTile
-            label="Queued print time"
-            value={`${stats.queuedHours.toFixed(1)} h`}
-            sub={`${stats.pipeline} orders waiting on the plate`}
-          />
-          <StatTile
-            label="Under rate"
-            value={String(stats.underCount)}
-            tone={stats.underCount ? 'critical' : undefined}
-            sub={
-              stats.underCount
-                ? `${stats.underHours.toFixed(0)} h queued below the typical rate`
-                : 'every queued job beats the median'
-            }
-          />
-        </div>
+        <NeedsYouList items={needs} />
 
         <div className="two">
-          <Card title="Revenue by month" note="profit vs cost">
-            <StackedColumnChart data={months} />
-          </Card>
-          <Card title="Order pipeline" note="orders by status">
-            <BarChart
-              data={pipeline}
-              format={(v) => v}
-              subFormat={(d) => fmtMoney(d.sub)}
-              emptyText="No orders in this range."
-            />
+          <HustleTile
+            tone="chargers"
+            title="Chargers"
+            profit={fmtMoney(teslaStats.net, true)}
+            href="/stats?tab=chargers"
+            rows={[
+              { label: 'Margin', value: `${teslaStats.margin.toFixed(1)}%` },
+              { label: 'In stock', value: String(teslaStats.available) },
+              { label: 'Sell-through', value: `${teslaStats.sellThrough.toFixed(1)}%` },
+            ]}
+          />
+          <HustleTile
+            tone="prints"
+            title="Prints"
+            profit={fmtMoney(printStats.net, true)}
+            href="/stats?tab=prints"
+            rows={[
+              { label: 'Margin', value: `${printStats.margin.toFixed(1)}%` },
+              { label: 'Open orders', value: String(printStats.pipeline) },
+              { label: 'Per print hr', value: fmtMoney(printStats.profitPerHour, true) },
+            ]}
+          />
+        </div>
+
+        <div className="block">
+          <Card title="Revenue by month" note="net profit, chargers vs prints">
+            <StackedColumnChart data={monthly} series={CHARGERS_PRINTS_SERIES} />
           </Card>
         </div>
 
-        <div className="two">
-          <Card title="Top items" note="by net profit">
-            <BarChart
-              data={topItems}
-              format={(v) => fmtMoney(v)}
-              subFormat={(d) => `${d.count}×`}
-              emptyText="No completed orders in this range."
-            />
-          </Card>
-          <Card title="Top customers" note="by net profit">
-            <BarChart
-              data={topCustomers}
-              format={(v) => fmtMoney(v)}
-              subFormat={(d) => `${d.count}×`}
-              emptyText="No completed orders in this range."
-            />
+        <div className="block">
+          <Card
+            title="Latest payments"
+            aside={
+              <Link href="/stats" className="seeAll">
+                See all
+              </Link>
+            }
+          >
+            {loading && !rawPrint.length && !rawTesla.length ? (
+              <Skeleton rows={4} />
+            ) : (
+              <PaymentsList rows={activity} />
+            )}
           </Card>
         </div>
-
-        <Card title="Daily net profit" note="every day in range">
-          <ProfitCalendar days={calendar} />
-        </Card>
-
-        <div className="spacer" />
-
-        <Card title="Payments" note={`${feed.length} shown`} flush>
-          {loading && !raw.length ? (
-            <div className="loading">Connecting to sheet…</div>
-          ) : (
-            <RecordFeed
-              rows={feed}
-              statusOptions={STATUS_OPTIONS}
-              onStatusChange={saveStatus}
-              savingKey={savingKey}
-            />
-          )}
-        </Card>
 
         <footer className="foot">
-          <span>
-            Google Sheets · 3D Print Orders ·{' '}
-            <Link href="/wrapped" className="wrapped">
-              Wrapped →
-            </Link>
-          </span>
+          <span>Google Sheets · 3D Print Orders + Tesla Inventory</span>
           <span>
             {stale
               ? 'Offline · showing last synced numbers'
@@ -431,17 +194,9 @@ export default function PrintOverview() {
                 : '—'}
           </span>
         </footer>
-      </Shell>
+      </AppShell>
 
       <style jsx>{`
-        .dismiss {
-          background: none;
-          border: none;
-          color: inherit;
-          text-decoration: underline;
-          font-size: 12px;
-          padding: 0 2px;
-        }
         .error {
           background: rgba(208, 59, 59, 0.12);
           border: 1px solid rgba(208, 59, 59, 0.35);
@@ -451,49 +206,58 @@ export default function PrintOverview() {
           padding: 10px 12px;
           margin-bottom: 14px;
         }
-        .kpis {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 10px;
-          margin-bottom: 12px;
+        .hero {
+          background: var(--surface);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 18px 16px;
+          margin: 14px 0;
+        }
+        .label {
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          color: var(--muted);
+        }
+        .value {
+          font-size: 38px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          color: var(--ink);
+          margin-top: 6px;
+          font-variant-numeric: tabular-nums;
+        }
+        .sub {
+          font-size: 12.5px;
+          color: var(--muted);
+          margin-top: 4px;
+        }
+        .splitWrap {
+          margin-top: 16px;
         }
         .two {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
-          margin-bottom: 12px;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-bottom: 14px;
         }
-        .spacer {
-          height: 12px;
-        }
-        .loading {
-          text-align: center;
-          color: var(--muted);
-          font-size: 13px;
-          padding: 40px 0;
-        }
-        .foot :global(.wrapped) {
+        :global(.seeAll) {
+          font-size: 12px;
+          font-weight: 600;
           color: var(--accent);
           text-decoration: none;
-          font-weight: 600;
         }
-        .foot :global(.wrapped:hover) {
-          text-decoration: underline;
+        .block {
+          margin-bottom: 14px;
         }
         .foot {
           display: flex;
-          justify-content: space-between;
+          flex-direction: column;
+          gap: 3px;
           font-size: 11px;
           color: var(--muted);
-          padding: 8px 2px 0;
-        }
-        @media (max-width: 860px) {
-          .kpis {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-          .two {
-            grid-template-columns: minmax(0, 1fr);
-          }
+          padding: 18px 2px 6px;
         }
       `}</style>
     </>

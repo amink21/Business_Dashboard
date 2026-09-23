@@ -73,7 +73,13 @@ export default function ProfitCalendar({ days, unit = 'profit' }) {
               )} on ${fmtDate(best.date, true)}`
             : 'No earning days in this range'}
         </span>
-        <div className="toggle" role="group" aria-label="Calendar view">
+        <div
+          className="toggle"
+          role="group"
+          aria-label="Calendar view"
+          style={{ '--count': 2, '--index': view === 'grid' ? 0 : 1 }}
+        >
+          <span className="thumb" aria-hidden="true" />
           <button
             type="button"
             className={`seg ${view === 'grid' ? 'on' : ''}`}
@@ -203,6 +209,7 @@ export default function ProfitCalendar({ days, unit = 'profit' }) {
           white-space: nowrap;
         }
         .toggle {
+          position: relative;
           display: inline-flex;
           background: var(--surface-2);
           border: 1px solid var(--line);
@@ -211,7 +218,28 @@ export default function ProfitCalendar({ days, unit = 'profit' }) {
           gap: 2px;
           flex-shrink: 0;
         }
+        .thumb {
+          position: absolute;
+          top: 2px;
+          bottom: 2px;
+          left: 2px;
+          width: calc((100% - 4px) / var(--count));
+          background: var(--surface-3);
+          border-radius: 6px;
+          transform: translateX(calc(var(--index) * 100%));
+          transition: transform 220ms var(--ease-out);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .thumb {
+            transition: none;
+          }
+        }
         .seg {
+          position: relative;
+          z-index: 1;
+          flex: 1;
+          min-width: 48px;
+          text-align: center;
           background: none;
           border: none;
           color: var(--muted);
@@ -221,12 +249,12 @@ export default function ProfitCalendar({ days, unit = 'profit' }) {
           border-radius: 6px;
         }
         .seg.on {
-          background: var(--surface-3);
           color: var(--ink);
         }
         .scroll {
           overflow-x: auto;
           padding-bottom: 2px;
+          overscroll-behavior: contain;
         }
         .months {
           display: grid;
@@ -300,6 +328,7 @@ export default function ProfitCalendar({ days, unit = 'profit' }) {
         .tableWrap {
           max-height: 220px;
           overflow-y: auto;
+          overscroll-behavior: contain;
         }
         table {
           width: 100%;

@@ -45,7 +45,7 @@ export default async function handler(req, res) {
   // plain http, which would make `npm start` on localhost impossible to log into.
   const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const secure = proto === 'https' || Boolean(req.socket && req.socket.encrypted);
-  const { action, password } = req.body || {};
+  const { action, password, keepSignedIn } = req.body || {};
 
   if (action === 'logout') {
     res.setHeader('Set-Cookie', cookieHeader('', { secure }));
@@ -72,6 +72,6 @@ export default async function handler(req, res) {
 
   attempts.delete(key);
   const token = await createToken(configured);
-  res.setHeader('Set-Cookie', cookieHeader(token, { secure }));
+  res.setHeader('Set-Cookie', cookieHeader(token, { secure, persist: Boolean(keepSignedIn) }));
   return res.status(200).json({ ok: true });
 }

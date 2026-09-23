@@ -2,12 +2,14 @@ import { useState } from 'react';
 import VolumeChart from './VolumeChart';
 import VolumeTable from './VolumeTable';
 import { fmtMoney } from '../lib/data';
+import { useCountUp } from '../lib/useCountUp';
 
 // The hero figure plus its chart. Exactly one of these per page - the hero is
 // the single number the dashboard leads with.
 export default function VolumePanel({ label, value, sub, delta, deltaLabel, points, emptyText }) {
   const [view, setView] = useState('chart');
   const up = delta != null && delta >= 0;
+  const displayValue = useCountUp(value || 0);
 
   return (
     <section className="hero">
@@ -15,7 +17,7 @@ export default function VolumePanel({ label, value, sub, delta, deltaLabel, poin
         <div>
           <div className="label">{label}</div>
           <div className="row">
-            <span className="value">{fmtMoney(value, true)}</span>
+            <span className="value">{fmtMoney(displayValue, true)}</span>
             {delta != null && (
               <span className={`delta ${up ? 'up' : 'down'}`}>
                 <span aria-hidden="true">{up ? '▲' : '▼'}</span>
@@ -26,7 +28,13 @@ export default function VolumePanel({ label, value, sub, delta, deltaLabel, poin
           <div className="sub">{sub}</div>
         </div>
 
-        <div className="toggle" role="group" aria-label="Chart view">
+        <div
+          className="toggle"
+          role="group"
+          aria-label="Chart view"
+          style={{ '--count': 2, '--index': view === 'chart' ? 0 : 1 }}
+        >
+          <span className="thumb" aria-hidden="true" />
           <button
             type="button"
             className={`seg ${view === 'chart' ? 'on' : ''}`}
@@ -111,6 +119,7 @@ export default function VolumePanel({ label, value, sub, delta, deltaLabel, poin
           margin-top: 7px;
         }
         .toggle {
+          position: relative;
           display: inline-flex;
           background: var(--surface-2);
           border: 1px solid var(--line);
@@ -119,7 +128,28 @@ export default function VolumePanel({ label, value, sub, delta, deltaLabel, poin
           gap: 2px;
           flex-shrink: 0;
         }
+        .thumb {
+          position: absolute;
+          top: 2px;
+          bottom: 2px;
+          left: 2px;
+          width: calc((100% - 4px) / var(--count));
+          background: var(--surface-3);
+          border-radius: 6px;
+          transform: translateX(calc(var(--index) * 100%));
+          transition: transform 220ms var(--ease-out);
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .thumb {
+            transition: none;
+          }
+        }
         .seg {
+          position: relative;
+          z-index: 1;
+          flex: 1;
+          min-width: 54px;
+          text-align: center;
           background: none;
           border: none;
           color: var(--muted);
@@ -129,7 +159,6 @@ export default function VolumePanel({ label, value, sub, delta, deltaLabel, poin
           border-radius: 6px;
         }
         .seg.on {
-          background: var(--surface-3);
           color: var(--ink);
         }
         @media (max-width: 720px) {

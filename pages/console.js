@@ -271,8 +271,10 @@ export default function ApiConsole() {
           color: var(--ink-2);
           font-family: inherit;
         }
-        .line:hover {
-          background: var(--surface-2);
+        @media (hover: hover) and (pointer: fine) {
+          .line:hover {
+            background: var(--surface-2);
+          }
         }
         .time {
           color: var(--muted);

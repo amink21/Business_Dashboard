@@ -57,6 +57,8 @@ function handle(e) {
         return json({ ok: true, tab: ORDERS_TAB, statuses: ALLOWED_STATUSES });
       case 'updateStatus':
         return json(updateStatus(p.orderId, p.status));
+      case 'createOrder':
+        return json(createOrder(p));
       default:
         return json({ error: 'Unknown action: ' + (p.action || '(none)') });
     }
@@ -162,6 +164,65 @@ function updateStatus(orderId, status) {
       row: sheetRow,
       filled: filled,
     };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Appends a new row from the Quote screen's "Add to queue" - always as a fresh
+// "Need to Print" job. Column positions come from columnMap, same as
+// updateStatus, so this keeps working if a column gets reordered by hand.
+function createOrder(p) {
+  const item = String(p.item || '').trim();
+  if (!item) return { error: 'Missing item' };
+  const hours = toNumber(p.hours);
+  if (!hours) return { error: 'Missing hours' };
+  const sale = toNumber(p.salePrice);
+  if (!sale) return { error: 'Missing salePrice' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(ORDERS_TAB);
+    if (!sheet) return { error: 'Tab "' + ORDERS_TAB + '" not found' };
+
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    const headerIdx = findHeaderRow(values);
+    if (headerIdx === -1) return { error: 'Could not find a header row' };
+
+    const cols = columnMap(values[headerIdx]);
+    if (cols['Order ID'] === undefined) return { error: 'Sheet is missing an "Order ID" column' };
+
+    // One past the highest existing P-#### id, so a manual sheet entry made
+    // between two writes never collides with a generated one.
+    let maxN = 0;
+    for (let i = headerIdx + 1; i < values.length; i += 1) {
+      const m = /^P-(\d+)$/.exec(String(values[i][cols['Order ID']] || ''));
+      if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+    }
+    const orderId = 'P-' + String(maxN + 1).padStart(4, '0');
+
+    const row = new Array(values[headerIdx].length).fill('');
+    const set = function (name, value) {
+      if (cols[name] !== undefined) row[cols[name]] = value;
+    };
+    set('Order ID', orderId);
+    set('Order Date', Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
+    set('Item / Model', item);
+    set('Qty', 1);
+    set('Print Hrs', hours);
+    set('Material Cost', toNumber(p.materialCost));
+    set('Total Cost', toNumber(p.totalCost));
+    set('Sale Price', sale);
+    set('Status', 'Need to Print');
+    set('Platform', 'Quote');
+
+    sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+    SpreadsheetApp.flush();
+
+    return { ok: true, orderId: orderId };
   } finally {
     lock.releaseLock();
   }

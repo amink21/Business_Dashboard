@@ -3,9 +3,12 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import BrowserChrome from './BrowserChrome';
 
+// Only /console still uses this desktop chrome - the other four routes moved
+// to the mobile AppShell when the site was redesigned as a phone-first PWA.
 const TABS = [
-  { href: '/', label: '3D Printing', mark: '🖨️', name: 'Print Lab' },
-  { href: '/tesla', label: 'Tesla Chargers', mark: '⚡', name: 'Charger Desk' },
+  { href: '/', label: 'Home', mark: '🖨️', name: 'Hustle Desk' },
+  { href: '/queue', label: 'Queue', mark: '🗒️', name: 'Queue' },
+  { href: '/stats', label: 'Stats', mark: '📊', name: 'Stats' },
   { href: '/quote', label: 'Quote', mark: '🧮', name: 'Quote Desk' },
   { href: '/console', label: 'Console', mark: '⌘', name: 'API Console' },
 ];
@@ -199,9 +202,11 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
           font-size: 12px;
           font-weight: 550;
         }
-        .btn:hover:not(:disabled) {
-          color: var(--ink);
-          border-color: var(--baseline);
+        @media (hover: hover) and (pointer: fine) {
+          .btn:hover:not(:disabled) {
+            color: var(--ink);
+            border-color: var(--baseline);
+          }
         }
         .btn:disabled {
           opacity: 0.55;
@@ -255,8 +260,10 @@ export default function Shell({ path, loading, onRefresh, onAlert, dim, children
           border-bottom: 2px solid transparent;
           white-space: nowrap;
         }
-        .tabs .tab:hover {
-          color: var(--ink-2);
+        @media (hover: hover) and (pointer: fine) {
+          .tabs .tab:hover {
+            color: var(--ink-2);
+          }
         }
         .tabs .tab.on {
           color: var(--ink);
