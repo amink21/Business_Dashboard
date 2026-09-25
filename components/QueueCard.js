@@ -1,3 +1,4 @@
+import PriceEditor from './PriceEditor';
 import { fmtDate, fmtMoney } from '../lib/data';
 
 function daysSince(date) {
@@ -11,7 +12,7 @@ const NEXT = {
   'Waiting for Pickup': { label: 'Mark picked up', status: 'Completed' },
 };
 
-export default function QueueCard({ order, expanded, onToggle, onAdvance, saving }) {
+export default function QueueCard({ order, expanded, onToggle, onAdvance, onEditPrice, saving }) {
   const next = order.id ? NEXT[order.status] : null;
   const age = daysSince(order.date);
 
@@ -27,7 +28,11 @@ export default function QueueCard({ order, expanded, onToggle, onAdvance, saving
             {[order.customer || 'No customer', order.platform, order.delivery].filter(Boolean).join(' · ')}
           </span>
         </span>
-        <span className="price">{fmtMoney(order.sale, true)}</span>
+        {order.id ? (
+          <PriceEditor value={order.sale} onSave={onEditPrice} saving={saving} />
+        ) : (
+          <span className="staticPrice">{fmtMoney(order.sale, true)}</span>
+        )}
       </div>
 
       <div className="tags">
@@ -119,7 +124,7 @@ export default function QueueCard({ order, expanded, onToggle, onAdvance, saving
           white-space: nowrap;
           margin-top: 1px;
         }
-        .price {
+        .staticPrice {
           font-size: 14px;
           font-weight: 650;
           color: var(--ink);

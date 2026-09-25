@@ -23,7 +23,8 @@ import {
   sparkSeries,
   topBy,
 } from '../lib/data';
-import { lookupMetric, monthlyStack as printMonthly, normalize as normalizePrint, pipelineBars, queueBucket, summarize as summarizePrint } from '../lib/print';
+import { openCount } from '../lib/home';
+import { lookupMetric, monthlyStack as printMonthly, normalize as normalizePrint, pipelineBars, summarize as summarizePrint } from '../lib/print';
 import { monthlyStack as teslaMonthly, normalize as normalizeTesla, stockBars, summarize as summarizeTesla } from '../lib/tesla';
 
 function chargerTiles(stats, prev, spark) {
@@ -221,7 +222,7 @@ export default function Stats() {
     [hustle, scoped]
   );
 
-  const queueBadge = useMemo(() => orders.filter((o) => queueBucket(o.status)).length, [orders]);
+  const queueBadge = useMemo(() => openCount(orders, items), [orders, items]);
 
   const tiles = hustle === 'chargers' ? chargerTiles(stats, prevStats, spark) : printTiles(stats, prevStats, spark, equipment);
   const primary = tiles.slice(0, 4);

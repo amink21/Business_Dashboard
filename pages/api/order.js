@@ -4,6 +4,8 @@
 // If they were in client code, anyone who opened the site could read them out of
 // the bundle and write to the sheet directly.
 
+import { callScript } from '../../lib/appsScript';
+
 const ALLOWED_STATUSES = [
   'Need to Print',
   'Printed',
@@ -62,70 +64,24 @@ export default async function handler(req, res) {
     return res.status(created.status).json(created.body);
   }
 
-  const { orderId, status } = body;
+  // Status and/or sale price - at least one, either, or both. Editing just the
+  // price (no status) is exactly what the Queue screen's price editor sends.
+  const { orderId, status, salePrice } = body;
   if (!orderId) return res.status(400).json({ error: 'Missing orderId.' });
-  if (!ALLOWED_STATUSES.includes(status)) {
+  if (status !== undefined && !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
   }
-
-  const result = await callScript(url, { action: 'updateStatus', token, orderId, status });
-  return res.status(result.status).json(result.body);
-}
-
-// Both actions share the same upstream shape: POST JSON, follow the redirect
-// Apps Script answers with, and translate its handful of failure modes into
-// something a debugging session doesn't need to happen to understand.
-async function callScript(url, payload) {
-  try {
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      redirect: 'follow',
-    });
-
-    const text = await upstream.text();
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      // An HTML body here means the deployment isn't reachable as we expect -
-      // usually "Who has access" is not set to Anyone, or the URL is stale.
-      return {
-        status: 502,
-        body: {
-          error:
-            'The Apps Script returned a page instead of JSON. Check the deployment is a Web app with access set to "Anyone", and that APPS_SCRIPT_URL is the current /exec URL.',
-        },
-      };
+  let price;
+  if (salePrice !== undefined) {
+    price = Number(salePrice);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: 'Price must be a positive number.' });
     }
-
-    if (data.error) {
-      // The script only says "Unauthorized" - which of the three usual causes it
-      // is saves a debugging session.
-      if (/unauthori/i.test(data.error)) {
-        return {
-          status: 400,
-          body: {
-            error:
-              'The script rejected the token. Check APPS_SCRIPT_TOKEN matches TOKEN in Code.gs exactly, that the token has no $ or # in it (a $ is expanded away by .env parsing), and that you redeployed the script after changing it.',
-          },
-        };
-      }
-      if (/unknown action/i.test(data.error)) {
-        return {
-          status: 400,
-          body: {
-            error:
-              'The deployed Apps Script does not know this action yet. Paste the current google-apps-script/Code.gs into the script editor and deploy a new version.',
-          },
-        };
-      }
-      return { status: 400, body: data };
-    }
-    return { status: 200, body: data };
-  } catch (err) {
-    return { status: 502, body: { error: `Could not reach the script: ${err.message}` } };
   }
+  if (status === undefined && price === undefined) {
+    return res.status(400).json({ error: 'Nothing to update.' });
+  }
+
+  const result = await callScript(url, { action: 'updateOrder', token, orderId, status, salePrice: price });
+  return res.status(result.status).json(result.body);
 }

@@ -14,8 +14,8 @@ import StackedColumnChart from '../components/StackedColumnChart';
 import SplitBar from '../components/SplitBar';
 import { fmtMoney, inBounds, rangeBounds } from '../lib/data';
 import { printAlerts, teslaAlerts } from '../lib/alerts';
-import { combineMonthly, combineStats, latestActivity, needsYou } from '../lib/home';
-import { monthlyStack as printMonthlyStack, normalize as normalizePrint, queueBucket, summarize as summarizePrint } from '../lib/print';
+import { combineMonthly, combineStats, latestActivity, needsYou, openCount } from '../lib/home';
+import { monthlyStack as printMonthlyStack, normalize as normalizePrint, summarize as summarizePrint } from '../lib/print';
 import { monthlyStack as teslaMonthlyStack, normalize as normalizeTesla, summarize as summarizeTesla } from '../lib/tesla';
 import { useCountUp } from '../lib/useCountUp';
 
@@ -93,7 +93,7 @@ export default function Home() {
   );
 
   const needs = useMemo(() => needsYou(orders, items, printStatsFull), [orders, items, printStatsFull]);
-  const queueBadge = useMemo(() => orders.filter((o) => queueBucket(o.status)).length, [orders]);
+  const queueBadge = useMemo(() => openCount(orders, items), [orders, items]);
   const activity = useMemo(() => latestActivity(scopedOrders, scopedItems, 5), [scopedOrders, scopedItems]);
 
   const alerts = useMemo(

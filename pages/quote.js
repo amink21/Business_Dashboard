@@ -5,7 +5,9 @@ import AppShell from '../components/AppShell';
 import Icon from '../components/Icon';
 import Stepper from '../components/Stepper';
 import { fmtMoney } from '../lib/data';
-import { normalize, queueBucket, summarize } from '../lib/print';
+import { openCount } from '../lib/home';
+import { normalize, summarize } from '../lib/print';
+import { normalize as normalizeTesla } from '../lib/tesla';
 
 const RATES = [4, 5, 6, 8];
 
@@ -29,6 +31,7 @@ function computeQuote({ hours, grams, delivery, rate }) {
 
 export default function Quote() {
   const [raw, setRaw] = useState([]);
+  const [rawTesla, setRawTesla] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [item, setItem] = useState('');
@@ -45,9 +48,13 @@ export default function Quote() {
   async function load() {
     setLoading(true);
     try {
-      const res = await fetch('/api/sheet?tab=print');
-      const data = await res.json();
-      if (res.ok) setRaw(data);
+      const [p, t] = await Promise.all([
+        fetch('/api/sheet?tab=print'),
+        fetch('/api/sheet?tab=tesla'),
+      ]);
+      const [pData, tData] = await Promise.all([p.json(), t.json()]);
+      if (p.ok) setRaw(pData);
+      if (t.ok) setRawTesla(tData);
     } finally {
       setLoading(false);
     }
@@ -58,8 +65,9 @@ export default function Quote() {
   }, []);
 
   const orders = useMemo(() => normalize(raw), [raw]);
+  const items = useMemo(() => normalizeTesla(rawTesla), [rawTesla]);
   const stats = useMemo(() => summarize(orders), [orders]);
-  const queueBadge = useMemo(() => orders.filter((o) => queueBucket(o.status)).length, [orders]);
+  const queueBadge = useMemo(() => openCount(orders, items), [orders, items]);
 
   const q = useMemo(() => computeQuote({ hours, grams, delivery, rate }), [hours, grams, delivery, rate]);
 

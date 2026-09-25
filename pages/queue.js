@@ -1,19 +1,33 @@
 import Head from 'next/head';
 import { useEffect, useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
+import ChargerCard from '../components/ChargerCard';
 import IconButton from '../components/IconButton';
 import QueueCard from '../components/QueueCard';
+import SegmentedTabs from '../components/SegmentedTabs';
 import Skeleton from '../components/Skeleton';
 import { fmtMoney } from '../lib/data';
-import { normalize, queueBucket } from '../lib/print';
+import { openCount } from '../lib/home';
+import { normalize as normalizePrint, queueBucket } from '../lib/print';
+import { normalize as normalizeTesla, teslaBucket } from '../lib/tesla';
 
-const TABS = [
+const HUSTLES = [
+  { id: 'prints', label: 'Prints' },
+  { id: 'chargers', label: 'Chargers' },
+];
+
+const PRINT_TABS = [
   { id: 'toPrint', label: 'To print' },
   { id: 'pickup', label: 'Pickup' },
   { id: 'done', label: 'Done' },
 ];
+const CHARGER_TABS = [
+  { id: 'available', label: 'Available' },
+  { id: 'pending', label: 'Pending' },
+  { id: 'sold', label: 'Sold' },
+];
 
-const SUMMARY = {
+const PRINT_SUMMARY = {
   toPrint: (list) => ({
     left: `${list.reduce((s, o) => s + o.hrs, 0).toFixed(0)} h of printing queued`,
     right: fmtMoney(list.reduce((s, o) => s + o.sale, 0), true),
@@ -27,13 +41,31 @@ const SUMMARY = {
     right: fmtMoney(list.reduce((s, o) => s + o.sale, 0), true),
   }),
 };
+const CHARGER_SUMMARY = {
+  available: (list) => ({
+    left: `${list.length} in stock`,
+    right: fmtMoney(list.reduce((s, i) => s + i.buy, 0), true),
+  }),
+  pending: (list) => ({
+    left: `${list.length} pending pickup`,
+    right: fmtMoney(list.reduce((s, i) => s + (i.sale || i.buy), 0), true),
+  }),
+  sold: (list) => ({
+    left: `${list.length} sold`,
+    right: fmtMoney(list.reduce((s, i) => s + i.sale, 0), true),
+  }),
+};
 
 export default function Queue() {
-  const [raw, setRaw] = useState([]);
+  const [rawPrint, setRawPrint] = useState([]);
+  const [rawTesla, setRawTesla] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [writeError, setWriteError] = useState(null);
-  const [tab, setTab] = useState('toPrint');
+
+  const [hustle, setHustle] = useState('prints');
+  const [printTab, setPrintTab] = useState('toPrint');
+  const [chargerTab, setChargerTab] = useState('available');
   const [expanded, setExpanded] = useState(null);
   const [savingKey, setSavingKey] = useState(null);
 
@@ -41,10 +73,15 @@ export default function Queue() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/sheet?tab=print');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load');
-      setRaw(data);
+      const [p, t] = await Promise.all([
+        fetch('/api/sheet?tab=print'),
+        fetch('/api/sheet?tab=tesla'),
+      ]);
+      const [pData, tData] = await Promise.all([p.json(), t.json()]);
+      if (!p.ok) throw new Error(pData.error || 'Failed to load prints');
+      if (!t.ok) throw new Error(tData.error || 'Failed to load chargers');
+      setRawPrint(pData);
+      setRawTesla(tData);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -56,8 +93,10 @@ export default function Queue() {
     load();
   }, []);
 
-  const orders = useMemo(() => normalize(raw), [raw]);
-  const buckets = useMemo(() => {
+  const orders = useMemo(() => normalizePrint(rawPrint), [rawPrint]);
+  const items = useMemo(() => normalizeTesla(rawTesla), [rawTesla]);
+
+  const printBuckets = useMemo(() => {
     const out = { toPrint: [], pickup: [], done: [] };
     for (const o of orders) {
       const b = queueBucket(o.status);
@@ -69,27 +108,68 @@ export default function Queue() {
     return out;
   }, [orders]);
 
-  const open = buckets.toPrint.length + buckets.pickup.length;
-  const openValue = [...buckets.toPrint, ...buckets.pickup].reduce((s, o) => s + o.sale, 0);
-  const list = buckets[tab];
-  const summary = SUMMARY[tab](list);
+  const chargerBuckets = useMemo(() => {
+    const out = { available: [], pending: [], sold: [] };
+    for (const i of items) {
+      const b = teslaBucket(i.status);
+      if (b) out[b].push(i);
+    }
+    out.available.sort((a, b) => (a.date && b.date ? a.date - b.date : 0));
+    out.pending.sort((a, b) => (a.date && b.date ? a.date - b.date : 0));
+    out.sold.sort((a, b) => (a.date && b.date ? b.date - a.date : 0));
+    return out;
+  }, [items]);
 
-  async function advance(row, status) {
-    const previous = raw;
-    setSavingKey(row.id);
+  const open = useMemo(() => openCount(orders, items), [orders, items]);
+  const openValue =
+    printBuckets.toPrint.reduce((s, o) => s + o.sale, 0) +
+    printBuckets.pickup.reduce((s, o) => s + o.sale, 0) +
+    chargerBuckets.available.reduce((s, i) => s + i.buy, 0) +
+    chargerBuckets.pending.reduce((s, i) => s + (i.sale || i.buy), 0);
+
+  const printList = printBuckets[printTab];
+  const chargerList = chargerBuckets[chargerTab];
+  const printSummary = PRINT_SUMMARY[printTab](printList);
+  const chargerSummary = CHARGER_SUMMARY[chargerTab](chargerList);
+
+  function switchHustle(next) {
+    setHustle(next);
+    setExpanded(null);
+  }
+
+  // Both hustles write through the same shape - optimistic local update, POST,
+  // PIN retry on 401, rollback on failure - just to a different endpoint and
+  // id column. One function instead of four near-identical copies.
+  async function saveWrite(kind, idValue, body) {
+    const isPrint = kind === 'print';
+    const url = isPrint ? '/api/order' : '/api/tesla';
+    const idColumn = isPrint ? 'Order ID' : 'Item ID';
+    const setRaw = isPrint ? setRawPrint : setRawTesla;
+
+    let previous;
+    setSavingKey(idValue);
     setWriteError(null);
-    setRaw((rows) =>
-      rows.map((r) => (r['Order ID'] === row.id ? { ...r, Status: status } : r))
-    );
+    setRaw((rows) => {
+      previous = rows;
+      return rows.map((r) =>
+        r[idColumn] === idValue
+          ? {
+              ...r,
+              ...(body.status !== undefined ? { Status: body.status } : {}),
+              ...(body.salePrice !== undefined ? { 'Sale Price': body.salePrice } : {}),
+            }
+          : r
+      );
+    });
 
     const post = (pin) =>
-      fetch('/api/order', {
+      fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(pin ? { 'x-dashboard-pin': pin } : {}),
         },
-        body: JSON.stringify({ orderId: row.id, status }),
+        body: JSON.stringify(body),
       });
 
     try {
@@ -112,8 +192,8 @@ export default function Queue() {
         res = await post(entered);
       }
 
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Could not save.');
+      const resBody = await res.json();
+      if (!res.ok) throw new Error(resBody.error || 'Could not save.');
     } catch (e) {
       setRaw(previous);
       setWriteError(e.message);
@@ -133,11 +213,13 @@ export default function Queue() {
         title="Queue"
         queueBadge={open}
         actions={
-          <IconButton
-            name="plus"
-            label="Add a job from a quote"
-            onClick={() => window.location.assign('/quote')}
-          />
+          hustle === 'prints' ? (
+            <IconButton
+              name="plus"
+              label="Add a job from a quote"
+              onClick={() => window.location.assign('/quote')}
+            />
+          ) : undefined
         }
       >
         {error && <div className="error">{error}</div>}
@@ -150,48 +232,78 @@ export default function Queue() {
           </div>
         )}
 
-        <div
-          className="tabs"
-          role="group"
-          aria-label="Queue stage"
-          style={{ '--count': TABS.length, '--index': TABS.findIndex((t) => t.id === tab) }}
-        >
-          <span className="thumb" aria-hidden="true" />
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`tab ${tab === t.id ? 'on' : ''}`}
-              aria-pressed={tab === t.id}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label} <span className="count">{buckets[t.id].length}</span>
-            </button>
-          ))}
+        <div className="hustleWrap">
+          <SegmentedTabs options={HUSTLES} value={hustle} onChange={switchHustle} ariaLabel="Hustle" />
         </div>
 
-        <div className="summary">
-          <span>{summary.left}</span>
-          <span className="sVal">{summary.right}</span>
-        </div>
+        {hustle === 'prints' ? (
+          <>
+            <SegmentedTabs
+              options={PRINT_TABS.map((t) => ({ ...t, count: printBuckets[t.id].length }))}
+              value={printTab}
+              onChange={setPrintTab}
+              ariaLabel="Print queue stage"
+            />
 
-        {loading && !raw.length ? (
-          <Skeleton rows={3} />
-        ) : list.length ? (
-          <ul className="list">
-            {list.map((o) => (
-              <QueueCard
-                key={o.id || `${o.item}-${o.date?.getTime()}`}
-                order={o}
-                expanded={expanded === o.id}
-                onToggle={() => setExpanded((cur) => (cur === o.id ? null : o.id))}
-                onAdvance={(status) => advance(o, status)}
-                saving={savingKey === o.id}
-              />
-            ))}
-          </ul>
+            <div className="summary">
+              <span>{printSummary.left}</span>
+              <span className="sVal">{printSummary.right}</span>
+            </div>
+
+            {loading && !rawPrint.length ? (
+              <Skeleton rows={3} />
+            ) : printList.length ? (
+              <ul className="list">
+                {printList.map((o) => (
+                  <QueueCard
+                    key={o.id || `${o.item}-${o.date?.getTime()}`}
+                    order={o}
+                    expanded={expanded === o.id}
+                    onToggle={() => setExpanded((cur) => (cur === o.id ? null : o.id))}
+                    onAdvance={(status) => saveWrite('print', o.id, { orderId: o.id, status })}
+                    onEditPrice={(price) => saveWrite('print', o.id, { orderId: o.id, salePrice: price })}
+                    saving={savingKey === o.id}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <div className="empty">Nothing here.</div>
+            )}
+          </>
         ) : (
-          <div className="empty">Nothing here.</div>
+          <>
+            <SegmentedTabs
+              options={CHARGER_TABS.map((t) => ({ ...t, count: chargerBuckets[t.id].length }))}
+              value={chargerTab}
+              onChange={setChargerTab}
+              ariaLabel="Charger queue stage"
+            />
+
+            <div className="summary">
+              <span>{chargerSummary.left}</span>
+              <span className="sVal">{chargerSummary.right}</span>
+            </div>
+
+            {loading && !rawTesla.length ? (
+              <Skeleton rows={3} />
+            ) : chargerList.length ? (
+              <ul className="list">
+                {chargerList.map((i) => (
+                  <ChargerCard
+                    key={i.id}
+                    item={i}
+                    expanded={expanded === i.id}
+                    onToggle={() => setExpanded((cur) => (cur === i.id ? null : i.id))}
+                    onAdvance={(status) => saveWrite('charger', i.id, { itemId: i.id, status })}
+                    onEditPrice={(price) => saveWrite('charger', i.id, { itemId: i.id, salePrice: price })}
+                    saving={savingKey === i.id}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <div className="empty">Nothing here.</div>
+            )}
+          </>
         )}
       </AppShell>
 
@@ -213,53 +325,9 @@ export default function Queue() {
           font-size: 12px;
           padding: 0 2px;
         }
-        .tabs {
-          position: relative;
-          display: flex;
-          background: var(--surface);
-          border: 1px solid var(--line);
-          border-radius: 10px;
-          padding: 3px;
-          gap: 2px;
+        .hustleWrap {
           margin-top: 6px;
-        }
-        .thumb {
-          position: absolute;
-          top: 3px;
-          bottom: 3px;
-          left: 3px;
-          width: calc((100% - 6px) / var(--count));
-          background: var(--surface-3);
-          border-radius: 7px;
-          transform: translateX(calc(var(--index) * 100%));
-          transition: transform 220ms var(--ease-out);
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .thumb {
-            transition: none;
-          }
-        }
-        .tab {
-          position: relative;
-          z-index: 1;
-          flex: 1;
-          background: none;
-          border: none;
-          color: var(--muted);
-          font-size: 12.5px;
-          font-weight: 600;
-          padding: 8px 0;
-          border-radius: 7px;
-          transition: transform 120ms ease;
-        }
-        .tab:active {
-          transform: scale(0.95);
-        }
-        .tab.on {
-          color: var(--ink);
-        }
-        .count {
-          font-variant-numeric: tabular-nums;
+          margin-bottom: 10px;
         }
         .summary {
           display: flex;

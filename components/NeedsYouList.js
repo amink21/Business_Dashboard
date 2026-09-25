@@ -42,6 +42,9 @@ export default function NeedsYouList({ items, onOpen }) {
       </ul>
 
       <style jsx>{`
+        .needs {
+          margin-bottom: 14px;
+        }
         h2 {
           font-size: 19px;
           font-weight: 700;

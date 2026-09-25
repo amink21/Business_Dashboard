@@ -70,6 +70,7 @@ const STROKE = {
     </>
   ),
   arrowLeft: <path d="M19 12H5M11 6l-6 6 6 6" />,
+  close: <path d="M6 6l12 12M18 6 6 18" />,
   bolt: <path d="M12.5 3 5 13.5h5.5L11 21l7.5-10.5H13L12.5 3Z" />,
   layers: (
     <>
