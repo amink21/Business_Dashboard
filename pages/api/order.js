@@ -49,17 +49,23 @@ export default async function handler(req, res) {
     if (!Number.isFinite(price) || price <= 0) {
       return res.status(400).json({ error: 'Price must be a positive number.' });
     }
+    const customer = typeof body.customer === 'string' ? body.customer.trim() : '';
     const materialCost = Number.isFinite(Number(body.materialCost)) ? Number(body.materialCost) : 0;
-    const deliveryCost = Number.isFinite(Number(body.deliveryCost)) ? Number(body.deliveryCost) : 0;
+    const otherCost = Number.isFinite(Number(body.otherCost)) ? Number(body.otherCost) : 0;
+    const delivery = typeof body.delivery === 'string' ? body.delivery : '';
+    const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
 
     const created = await callScript(url, {
       action: 'createOrder',
       token,
       item,
+      customer,
       hours,
       materialCost,
-      totalCost: materialCost + deliveryCost,
+      otherCost,
       salePrice: price,
+      delivery,
+      notes,
     });
     return res.status(created.status).json(created.body);
   }

@@ -74,6 +74,8 @@ function handle(e) {
         return json(createOrder(p));
       case 'updateTeslaItem':
         return json(updateTeslaItem(p));
+      case 'createTeslaItems':
+        return json(createTeslaItems(p));
       default:
         return json({ error: 'Unknown action: ' + (p.action || '(none)') });
     }
@@ -206,8 +208,15 @@ function updateOrder(p) {
 }
 
 // Appends a new row from the Quote screen's "Add to queue" - always as a fresh
-// "Need to Print" job. Column positions come from columnMap, same as
-// updateStatus, so this keeps working if a column gets reordered by hand.
+// "Need to Print" job, landing right after the last real order rather than at
+// getLastRow(). Order ID and Total Cost are formulas the sheet already has
+// filled in hundreds of rows ahead (so dropdowns and validation are ready
+// before they're needed), which makes those cells look like "data" to
+// getLastRow() even though no order lives there yet - and writing a full row
+// over one of them would blank out the formula, not just add a value. So
+// this finds the row by an unambiguous, never-a-formula column (Item / Model)
+// and sets only the specific cells a quote actually provides, leaving Order
+// ID, Total Cost, Profit, Margin %, and every dropdown's validation untouched.
 function createOrder(p) {
   const item = String(p.item || '').trim();
   if (!item) return { error: 'Missing item' };
@@ -229,36 +238,42 @@ function createOrder(p) {
     if (headerIdx === -1) return { error: 'Could not find a header row' };
 
     const cols = columnMap(values[headerIdx]);
-    if (cols['Order ID'] === undefined) return { error: 'Sheet is missing an "Order ID" column' };
-
-    // One past the highest existing P-#### id, so a manual sheet entry made
-    // between two writes never collides with a generated one.
-    let maxN = 0;
-    for (let i = headerIdx + 1; i < values.length; i += 1) {
-      const m = /^P-(\d+)$/.exec(String(values[i][cols['Order ID']] || ''));
-      if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+    if (cols['Item / Model'] === undefined) {
+      return { error: 'Sheet is missing an "Item / Model" column' };
     }
-    const orderId = 'P-' + String(maxN + 1).padStart(4, '0');
 
-    const row = new Array(values[headerIdx].length).fill('');
+    let lastRealIdx = headerIdx;
+    for (let i = headerIdx + 1; i < values.length; i += 1) {
+      if (String(values[i][cols['Item / Model']] || '').trim() !== '') lastRealIdx = i;
+    }
+    const targetRow = lastRealIdx + 2; // 0-based values index -> 1-based sheet row, then the next row down
+
     const set = function (name, value) {
-      if (cols[name] !== undefined) row[cols[name]] = value;
+      if (cols[name] === undefined) return;
+      sheet.getRange(targetRow, cols[name] + 1).setValue(value);
     };
-    set('Order ID', orderId);
+
     set('Order Date', Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd'));
+    set('Customer', String(p.customer || '').trim());
     set('Item / Model', item);
     set('Qty', 1);
     set('Print Hrs', hours);
     set('Material Cost', toNumber(p.materialCost));
-    set('Total Cost', toNumber(p.totalCost));
+    set('Other Costs', toNumber(p.otherCost));
     set('Sale Price', sale);
     set('Status', 'Need to Print');
-    set('Platform', 'Quote');
+    set('Platform', 'Facebook');
+    if (p.delivery) set('Delivery', String(p.delivery));
+    if (p.notes) set('Notes', String(p.notes).trim());
 
-    sheet.getRange(sheet.getLastRow() + 1, 1, 1, row.length).setValues([row]);
     SpreadsheetApp.flush();
 
-    return { ok: true, orderId: orderId };
+    // Order ID is a formula keyed off this row's Order Date, so it only has a
+    // value once that's set - read it back now rather than reconstruct it.
+    const orderId =
+      cols['Order ID'] !== undefined ? String(sheet.getRange(targetRow, cols['Order ID'] + 1).getValue() || '') : '';
+
+    return { ok: true, orderId: orderId, row: targetRow };
   } finally {
     lock.releaseLock();
   }
@@ -344,6 +359,76 @@ function updateTeslaItem(p) {
       row: sheetRow,
       filled: filled,
     };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Appends N identical rows from the Restock screen - one tap for a whole
+// batch instead of filling the same product/supplier/price in by hand N
+// times. Same insertion logic as createOrder: find the row by the one column
+// that's never a formula (Product Type), so getLastRow() can't be fooled by
+// the Item ID formula pre-filled many rows ahead, and never stomp that
+// formula or the Status/Supplier dropdowns already sitting on those rows.
+function createTeslaItems(p) {
+  const product = String(p.product || '').trim();
+  if (!product) return { error: 'Missing product' };
+  const price = toNumber(p.purchasePrice);
+  if (!(price > 0)) return { error: 'purchasePrice must be a positive number' };
+  const qty = Math.round(toNumber(p.quantity));
+  if (!(qty > 0) || qty > 100) return { error: 'quantity must be between 1 and 100' };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+
+  try {
+    const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(TESLA_TAB);
+    if (!sheet) return { error: 'Tab "' + TESLA_TAB + '" not found' };
+
+    const range = sheet.getDataRange();
+    const values = range.getValues();
+    const headerIdx = findHeaderRow(values);
+    if (headerIdx === -1) return { error: 'Could not find a header row' };
+
+    const cols = columnMap(values[headerIdx]);
+    if (cols['Product Type'] === undefined) {
+      return { error: 'Sheet is missing a "Product Type" column' };
+    }
+
+    let lastRealIdx = headerIdx;
+    for (let i = headerIdx + 1; i < values.length; i += 1) {
+      if (String(values[i][cols['Product Type']] || '').trim() !== '') lastRealIdx = i;
+    }
+
+    const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    const supplier = String(p.supplier || '').trim();
+
+    for (let n = 0; n < qty; n += 1) {
+      const targetRow = lastRealIdx + 2 + n;
+      const set = function (name, value) {
+        if (cols[name] === undefined) return;
+        sheet.getRange(targetRow, cols[name] + 1).setValue(value);
+      };
+      set('Purchase Date', today);
+      set('Product Type', product);
+      set('Supplier', supplier);
+      set('Purchase Price', price);
+      set('Status', 'Available');
+    }
+
+    SpreadsheetApp.flush();
+
+    // Item ID is a formula keyed off each row's Purchase Date, so it only has
+    // a value once that's set - read the batch back now rather than guess it.
+    const itemIds = [];
+    if (cols['Item ID'] !== undefined) {
+      for (let n = 0; n < qty; n += 1) {
+        const targetRow = lastRealIdx + 2 + n;
+        itemIds.push(String(sheet.getRange(targetRow, cols['Item ID'] + 1).getValue() || ''));
+      }
+    }
+
+    return { ok: true, count: qty, itemIds: itemIds };
   } finally {
     lock.releaseLock();
   }

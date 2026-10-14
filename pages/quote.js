@@ -1,49 +1,47 @@
 import Head from 'next/head';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import AppShell from '../components/AppShell';
 import Icon from '../components/Icon';
+import SegmentedTabs from '../components/SegmentedTabs';
 import Stepper from '../components/Stepper';
 import { fmtMoney } from '../lib/data';
 import { openCount } from '../lib/home';
 import { normalize, summarize } from '../lib/print';
 import { normalize as normalizeTesla } from '../lib/tesla';
 
-const RATES = [4, 5, 6, 8];
+const HUSTLES = [
+  { id: 'prints', label: 'Prints' },
+  { id: 'chargers', label: 'Chargers' },
+];
+const DELIVERY_OPTIONS = [
+  { id: 'Montreal', label: 'Montreal' },
+  { id: 'Ottawa', label: 'Ottawa' },
+  { id: 'Delivery (Extra $)', label: 'Delivery' },
+];
 
-// Nothing in the sheet prices a gram of filament or a delivery run, so these
-// two are honest placeholders rather than derived facts - adjust them here if
-// they're off for your spool and your driving.
-const FILAMENT_PER_GRAM = 0.025; // ~$25/kg spool
-const DELIVERY_FEE = 12;
-
-function computeQuote({ hours, grams, delivery, rate }) {
-  const printerTime = rate * hours;
-  const filament = grams * FILAMENT_PER_GRAM;
-  const deliveryCost = delivery ? DELIVERY_FEE : 0;
-  const raw = printerTime + filament + deliveryCost;
-  // Rounded up to a clean $5 so the number is easy to say out loud in a reply.
-  const quote = Math.ceil(raw / 5) * 5;
-  const keep = quote - filament - deliveryCost;
+function computeQuote({ hours, materialCost, otherCost, salePrice }) {
+  const keep = salePrice - materialCost - otherCost;
   const perHour = hours ? keep / hours : 0;
-  return { printerTime, filament, deliveryCost, quote, keep, perHour };
+  return { keep, perHour };
 }
 
 export default function Quote() {
-  const [raw, setRaw] = useState([]);
+  const router = useRouter();
+  const [hustle, setHustle] = useState('prints');
+
+  useEffect(() => {
+    if (router.query.tab === 'prints' || router.query.tab === 'chargers') {
+      setHustle(router.query.tab);
+    }
+  }, [router.query.tab]);
+
+  // Shared between both sides - both need the full print+charger picture for
+  // the queue badge, and the print side also needs it for its rate history.
+  const [rawPrint, setRawPrint] = useState([]);
   const [rawTesla, setRawTesla] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  const [item, setItem] = useState('');
-  const [hours, setHours] = useState(7);
-  const [grams, setGrams] = useState(120);
-  const [delivery, setDelivery] = useState(false);
-  const [rate, setRate] = useState(5);
-
-  const [copied, setCopied] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState(null);
-  const [addedId, setAddedId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -53,7 +51,7 @@ export default function Quote() {
         fetch('/api/sheet?tab=tesla'),
       ]);
       const [pData, tData] = await Promise.all([p.json(), t.json()]);
-      if (p.ok) setRaw(pData);
+      if (p.ok) setRawPrint(pData);
       if (t.ok) setRawTesla(tData);
     } finally {
       setLoading(false);
@@ -64,12 +62,30 @@ export default function Quote() {
     load();
   }, []);
 
-  const orders = useMemo(() => normalize(raw), [raw]);
+  const orders = useMemo(() => normalize(rawPrint), [rawPrint]);
   const items = useMemo(() => normalizeTesla(rawTesla), [rawTesla]);
   const stats = useMemo(() => summarize(orders), [orders]);
   const queueBadge = useMemo(() => openCount(orders, items), [orders, items]);
 
-  const q = useMemo(() => computeQuote({ hours, grams, delivery, rate }), [hours, grams, delivery, rate]);
+  // ---------------------------------------------------------------- Prints
+  const [customer, setCustomer] = useState('');
+  const [item, setItem] = useState('');
+  const [hours, setHours] = useState(7);
+  const [materialCost, setMaterialCost] = useState(3);
+  const [otherCost, setOtherCost] = useState(0);
+  const [salePrice, setSalePrice] = useState(40);
+  const [delivery, setDelivery] = useState('Montreal');
+  const [notes, setNotes] = useState('');
+
+  const [copied, setCopied] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState(null);
+  const [addedId, setAddedId] = useState(null);
+
+  const q = useMemo(
+    () => computeQuote({ hours, materialCost, otherCost, salePrice }),
+    [hours, materialCost, otherCost, salePrice]
+  );
 
   const tone = !stats.medianRate
     ? 'good'
@@ -86,8 +102,9 @@ export default function Quote() {
   }, [copied]);
 
   async function copyReply() {
+    const greeting = customer.trim() ? `Hey ${customer.trim()}! ` : '';
     const name = item.trim() || 'this print';
-    const text = `${name} comes out to ${fmtMoney(q.quote, true)} — about ${hours}h of print time. Let me know if you want it queued up!`;
+    const text = `${greeting}${name} comes out to ${fmtMoney(salePrice, true)} — about ${hours}h of print time. Let me know if you want it queued up!`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
@@ -107,11 +124,14 @@ export default function Quote() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'create',
+          customer: customer.trim(),
           item: item.trim(),
           hours,
-          materialCost: q.filament,
-          deliveryCost: q.deliveryCost,
-          price: q.quote,
+          materialCost,
+          otherCost,
+          price: salePrice,
+          delivery,
+          notes: notes.trim(),
         }),
       });
       const body = await res.json();
@@ -124,120 +144,298 @@ export default function Quote() {
     }
   }
 
+  // --------------------------------------------------------------- Chargers
+  const [product, setProduct] = useState('');
+  const [supplier, setSupplier] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [purchasePrice, setPurchasePrice] = useState(100);
+
+  const [stocking, setStocking] = useState(false);
+  const [stockError, setStockError] = useState(null);
+  const [stockedCount, setStockedCount] = useState(null);
+
+  const products = useMemo(
+    () => Array.from(new Set(items.map((i) => i.product).filter(Boolean))).sort(),
+    [items]
+  );
+  const suppliers = useMemo(
+    () => Array.from(new Set(items.map((i) => i.supplier).filter(Boolean))).sort(),
+    [items]
+  );
+  const totalCost = purchasePrice * quantity;
+
+  async function addStock() {
+    if (!product.trim() || stocking) return;
+    setStocking(true);
+    setStockError(null);
+    setStockedCount(null);
+    try {
+      const res = await fetch('/api/tesla', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'create',
+          product: product.trim(),
+          supplier: supplier.trim(),
+          purchasePrice,
+          quantity,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Could not add stock.');
+      setStockedCount(body.count || quantity);
+      setProduct('');
+      setQuantity(1);
+    } catch (e) {
+      setStockError(e.message);
+    } finally {
+      setStocking(false);
+    }
+  }
+
   return (
     <>
       <Head>
-        <title>Quote — Hustle Desk</title>
+        <title>{`${hustle === 'prints' ? 'Quote' : 'Log Stock'} — Hustle Desk`}</title>
       </Head>
 
-      <AppShell kicker="3D PRINT" title="Quote" queueBadge={queueBadge}>
-        <section className="form">
-          <label className="row">
-            <span className="rLabel">Item</span>
-            <input
-              type="text"
-              className="itemInput"
-              placeholder="e.g. Porsche Spoiler Shelf"
-              value={item}
-              onChange={(e) => setItem(e.target.value)}
-            />
-          </label>
-
-          <div className="row">
-            <span className="rLabel">Print time</span>
-            <Stepper value={hours} onChange={setHours} step={0.5} unit="h" decimals={hours % 1 ? 1 : 0} />
-          </div>
-
-          <div className="row">
-            <span className="rLabel">Filament</span>
-            <Stepper value={grams} onChange={setGrams} step={10} unit="g" />
-          </div>
-
-          <div className="row last">
-            <span className="rLabel">Delivery</span>
-            <button
-              type="button"
-              className={`toggle ${delivery ? 'on' : ''}`}
-              role="switch"
-              aria-checked={delivery}
-              aria-label="Include delivery"
-              onClick={() => setDelivery((v) => !v)}
-            >
-              <span className="knob" />
-            </button>
-          </div>
-        </section>
-
-        <div className="rateLabel">Rate per printer hour</div>
-        <div className="rates">
-          {RATES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              className={`rate ${rate === r ? 'on' : ''}`}
-              aria-pressed={rate === r}
-              onClick={() => setRate(r)}
-            >
-              {fmtMoney(r)}
-            </button>
-          ))}
+      <AppShell
+        kicker={hustle === 'prints' ? '3D PRINT' : 'TESLA CHARGERS'}
+        title={hustle === 'prints' ? 'Quote' : 'Log Stock'}
+        queueBadge={queueBadge}
+      >
+        <div className="hustleWrap">
+          <SegmentedTabs options={HUSTLES} value={hustle} onChange={setHustle} ariaLabel="Hustle" />
         </div>
 
-        <section className="result">
-          <div className="rTop">
-            <div>
-              <div className="rLabel2">Quote</div>
-              <div className="rBig">{fmtMoney(q.quote)}</div>
-            </div>
-            <span className={`perHr ${tone}`}>{fmtMoney(q.perHour, true)}/hr</span>
-          </div>
+        {hustle === 'prints' ? (
+          <>
+            <section className="form">
+              <label className="row">
+                <span className="rLabel">Customer</span>
+                <input
+                  type="text"
+                  className="textInput"
+                  placeholder="optional"
+                  value={customer}
+                  onChange={(e) => setCustomer(e.target.value)}
+                />
+              </label>
 
-          <div className="rRows">
-            <div className="rRow">
-              <span>Printer time</span>
-              <span>{fmtMoney(q.printerTime, true)}</span>
-            </div>
-            <div className="rRow">
-              <span>Filament</span>
-              <span>{fmtMoney(q.filament, true)}</span>
-            </div>
-            <div className="rRow">
-              <span>Delivery</span>
-              <span>{fmtMoney(q.deliveryCost, true)}</span>
-            </div>
-          </div>
+              <label className="row">
+                <span className="rLabel">Item</span>
+                <input
+                  type="text"
+                  className="textInput"
+                  placeholder="e.g. Porsche Spoiler Shelf"
+                  value={item}
+                  onChange={(e) => setItem(e.target.value)}
+                />
+              </label>
 
-          <div className="rKeep">
-            <span>You keep</span>
-            <span className="keepVal">{fmtMoney(q.keep, true)}</span>
-          </div>
-        </section>
+              <div className="row">
+                <span className="rLabel">Print time</span>
+                <Stepper value={hours} onChange={setHours} step={0.5} unit="h" decimals={hours % 1 ? 1 : 0} />
+              </div>
 
-        {addError && <div className="error">{addError}</div>}
-        {addedId && (
-          <div className="success">
-            Added as {addedId}. <Link href="/queue">View in Queue →</Link>
-          </div>
+              <div className="row">
+                <span className="rLabel">Material cost</span>
+                <Stepper
+                  value={materialCost}
+                  onChange={setMaterialCost}
+                  step={0.5}
+                  unit="$"
+                  decimals={materialCost % 1 ? 2 : 0}
+                />
+              </div>
+
+              <div className="row">
+                <span className="rLabel">Other cost</span>
+                <Stepper
+                  value={otherCost}
+                  onChange={setOtherCost}
+                  step={0.5}
+                  unit="$"
+                  decimals={otherCost % 1 ? 2 : 0}
+                />
+              </div>
+
+              <div className="row">
+                <span className="rLabel">Sale price</span>
+                <Stepper
+                  value={salePrice}
+                  onChange={setSalePrice}
+                  step={5}
+                  unit="$"
+                  decimals={salePrice % 1 ? 2 : 0}
+                />
+              </div>
+
+              <label className="row last">
+                <span className="rLabel">Notes</span>
+                <input
+                  type="text"
+                  className="textInput"
+                  placeholder="optional"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
+              </label>
+            </section>
+
+            <div className="sectionLabel">Delivery</div>
+            <div className="deliveryWrap">
+              <SegmentedTabs options={DELIVERY_OPTIONS} value={delivery} onChange={setDelivery} ariaLabel="Delivery" />
+            </div>
+
+            <section className="result">
+              <div className="rTop">
+                <div>
+                  <div className="rLabel2">You keep</div>
+                  <div className={`rBig ${q.keep >= 0 ? 'good' : 'bad'}`}>{fmtMoney(q.keep, true)}</div>
+                </div>
+                <span className={`pill ${tone}`}>{fmtMoney(q.perHour, true)}/hr</span>
+              </div>
+
+              <div className="rRows">
+                <div className="rRow">
+                  <span>Sale price</span>
+                  <span>{fmtMoney(salePrice, true)}</span>
+                </div>
+                <div className="rRow">
+                  <span>Material cost</span>
+                  <span>−{fmtMoney(materialCost, true)}</span>
+                </div>
+                <div className="rRow">
+                  <span>Other cost</span>
+                  <span>−{fmtMoney(otherCost, true)}</span>
+                </div>
+              </div>
+            </section>
+
+            {addError && <div className="error">{addError}</div>}
+            {addedId && (
+              <div className="success">
+                Added as {addedId}. <Link href="/queue">View in Queue →</Link>
+              </div>
+            )}
+
+            <div className="actions">
+              <button type="button" className="btn ghost" onClick={copyReply}>
+                <Icon name="copy" size={16} />
+                {copied ? 'Copied' : 'Copy reply'}
+              </button>
+              <button
+                type="button"
+                className="btn solid"
+                onClick={addToQueue}
+                disabled={!item.trim() || !(salePrice > 0) || adding || loading}
+              >
+                {adding ? 'Adding…' : 'Add to queue'}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <section className="form">
+              <label className="row">
+                <span className="rLabel">Product</span>
+                <input
+                  type="text"
+                  className="textInput"
+                  list="productOptions"
+                  placeholder="e.g. 120V Mobile Connector"
+                  value={product}
+                  onChange={(e) => setProduct(e.target.value)}
+                />
+                <datalist id="productOptions">
+                  {products.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
+              </label>
+
+              <label className="row">
+                <span className="rLabel">Supplier</span>
+                <input
+                  type="text"
+                  className="textInput"
+                  list="supplierOptions"
+                  placeholder="optional"
+                  value={supplier}
+                  onChange={(e) => setSupplier(e.target.value)}
+                />
+                <datalist id="supplierOptions">
+                  {suppliers.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </label>
+
+              <div className="row">
+                <span className="rLabel">Quantity</span>
+                <Stepper
+                  value={quantity}
+                  onChange={(v) => setQuantity(Math.max(1, Math.round(v)))}
+                  step={1}
+                  unit="×"
+                />
+              </div>
+
+              <div className="row last">
+                <span className="rLabel">Price each</span>
+                <Stepper
+                  value={purchasePrice}
+                  onChange={setPurchasePrice}
+                  step={5}
+                  unit="$"
+                  decimals={purchasePrice % 1 ? 2 : 0}
+                />
+              </div>
+            </section>
+
+            <section className="result">
+              <div className="rTop">
+                <div>
+                  <div className="rLabel2">Total cost</div>
+                  <div className="rBig charger">{fmtMoney(totalCost, true)}</div>
+                </div>
+                <span className="pill charger">
+                  {quantity} × {fmtMoney(purchasePrice, true)}
+                </span>
+              </div>
+            </section>
+
+            {stockError && <div className="error">{stockError}</div>}
+            {stockedCount && (
+              <div className="success">
+                Added {stockedCount} to inventory. <Link href="/queue?tab=chargers">View in Queue →</Link>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="btn solid full"
+              onClick={addStock}
+              disabled={!product.trim() || !(purchasePrice > 0) || stocking || loading}
+            >
+              {stocking ? 'Adding…' : `Add ${quantity} to inventory`}
+            </button>
+          </>
         )}
-
-        <div className="actions">
-          <button type="button" className="btn ghost" onClick={copyReply}>
-            <Icon name="copy" size={16} />
-            {copied ? 'Copied' : 'Copy reply'}
-          </button>
-          <button type="button" className="btn solid" onClick={addToQueue} disabled={!item.trim() || adding || loading}>
-            {adding ? 'Adding…' : 'Add to queue'}
-          </button>
-        </div>
       </AppShell>
 
       <style jsx>{`
+        .hustleWrap {
+          margin-top: 4px;
+          margin-bottom: 14px;
+        }
         .form {
           background: var(--surface);
           border: 1px solid var(--line);
           border-radius: 16px;
           padding: 4px 16px;
-          margin: 6px 0 18px;
+          margin-bottom: 18px;
         }
         .row {
           display: flex;
@@ -255,7 +453,7 @@ export default function Quote() {
           color: var(--ink-2);
           flex-shrink: 0;
         }
-        .itemInput {
+        .textInput {
           flex: 1;
           min-width: 0;
           background: none;
@@ -264,65 +462,16 @@ export default function Quote() {
           font-size: 14px;
           text-align: right;
         }
-        .itemInput::placeholder {
+        .textInput::placeholder {
           color: var(--muted);
         }
-        .toggle {
-          width: 46px;
-          height: 27px;
-          border-radius: 14px;
-          background: var(--surface-3);
-          border: 1px solid var(--line);
-          padding: 2px;
-          display: flex;
-          align-items: center;
-          flex-shrink: 0;
-          transition: background 140ms ease;
-        }
-        .toggle:active .knob {
-          width: 24px;
-        }
-        .toggle.on {
-          background: var(--accent);
-          border-color: var(--accent);
-          justify-content: flex-end;
-        }
-        .knob {
-          width: 21px;
-          height: 21px;
-          border-radius: 50%;
-          background: #fff;
-          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
-          transition: width 140ms ease;
-        }
-        .rateLabel {
+        .sectionLabel {
           font-size: 12.5px;
           color: var(--muted);
           margin-bottom: 8px;
         }
-        .rates {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 8px;
+        .deliveryWrap {
           margin-bottom: 18px;
-        }
-        .rate {
-          background: var(--surface);
-          border: 1px solid var(--line);
-          color: var(--ink-2);
-          font-size: 13.5px;
-          font-weight: 650;
-          padding: 10px 0;
-          border-radius: 10px;
-          transition: transform 120ms ease;
-        }
-        .rate:active {
-          transform: scale(0.94);
-        }
-        .rate.on {
-          background: var(--accent-wash);
-          border-color: var(--accent-dim);
-          color: var(--accent);
         }
         .result {
           background: var(--surface);
@@ -348,29 +497,42 @@ export default function Quote() {
           font-size: 34px;
           font-weight: 700;
           letter-spacing: -0.02em;
-          color: var(--ink);
           margin-top: 4px;
           font-variant-numeric: tabular-nums;
         }
-        .perHr {
+        .rBig.good {
+          color: var(--accent);
+        }
+        .rBig.bad {
+          color: var(--critical);
+        }
+        .rBig.charger {
+          color: var(--chargers);
+        }
+        .pill {
           font-size: 12px;
           font-weight: 650;
           padding: 5px 10px;
           border-radius: 999px;
           margin-top: 2px;
           white-space: nowrap;
+          font-variant-numeric: tabular-nums;
         }
-        .perHr.good {
+        .pill.good {
           color: var(--accent);
           background: var(--accent-wash);
         }
-        .perHr.warn {
+        .pill.warn {
           color: var(--warning);
           background: rgba(250, 178, 25, 0.14);
         }
-        .perHr.bad {
+        .pill.bad {
           color: var(--critical);
           background: rgba(208, 59, 59, 0.14);
+        }
+        .pill.charger {
+          color: var(--chargers);
+          background: var(--chargers-wash);
         }
         .rRows {
           display: flex;
@@ -383,19 +545,6 @@ export default function Quote() {
         .rRow {
           display: flex;
           justify-content: space-between;
-        }
-        .rKeep {
-          display: flex;
-          justify-content: space-between;
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px solid var(--line);
-          font-size: 14px;
-          color: var(--ink-2);
-        }
-        .keepVal {
-          color: var(--accent);
-          font-weight: 700;
         }
         .error {
           background: rgba(208, 59, 59, 0.12);
@@ -435,6 +584,10 @@ export default function Quote() {
           font-size: 14px;
           font-weight: 650;
           transition: transform 120ms ease;
+        }
+        .btn.full {
+          width: 100%;
+          margin-bottom: 8px;
         }
         .btn:active:not(:disabled) {
           transform: scale(0.97);

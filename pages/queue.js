@@ -66,6 +66,7 @@ export default function Queue() {
   const [hustle, setHustle] = useState('prints');
   const [printTab, setPrintTab] = useState('toPrint');
   const [chargerTab, setChargerTab] = useState('available');
+  const [productFilter, setProductFilter] = useState('all');
   const [expanded, setExpanded] = useState(null);
   const [savingKey, setSavingKey] = useState(null);
 
@@ -130,11 +131,32 @@ export default function Queue() {
   const printList = printBuckets[printTab];
   const chargerList = chargerBuckets[chargerTab];
   const printSummary = PRINT_SUMMARY[printTab](printList);
-  const chargerSummary = CHARGER_SUMMARY[chargerTab](chargerList);
+
+  // Which products actually show up in the current status bucket, and how
+  // many of each - so the chip row only ever offers filters that do
+  // something, and never strands you on an empty list with no visible reason.
+  const chargerProductCounts = useMemo(() => {
+    const map = new Map();
+    for (const i of chargerList) map.set(i.product, (map.get(i.product) || 0) + 1);
+    return Array.from(map.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([product, count]) => ({ product, count }));
+  }, [chargerList]);
+
+  const chargerListFiltered = useMemo(
+    () => (productFilter === 'all' ? chargerList : chargerList.filter((i) => i.product === productFilter)),
+    [chargerList, productFilter]
+  );
+  const chargerSummary = CHARGER_SUMMARY[chargerTab](chargerListFiltered);
 
   function switchHustle(next) {
     setHustle(next);
     setExpanded(null);
+  }
+
+  function switchChargerTab(next) {
+    setChargerTab(next);
+    setProductFilter('all');
   }
 
   // Both hustles write through the same shape - optimistic local update, POST,
@@ -213,13 +235,11 @@ export default function Queue() {
         title="Queue"
         queueBadge={open}
         actions={
-          hustle === 'prints' ? (
-            <IconButton
-              name="plus"
-              label="Add a job from a quote"
-              onClick={() => window.location.assign('/quote')}
-            />
-          ) : undefined
+          <IconButton
+            name="plus"
+            label={hustle === 'prints' ? 'Add a job from a quote' : 'Log new charger stock'}
+            onClick={() => window.location.assign(hustle === 'prints' ? '/quote' : '/quote?tab=chargers')}
+          />
         }
       >
         {error && <div className="error">{error}</div>}
@@ -275,9 +295,33 @@ export default function Queue() {
             <SegmentedTabs
               options={CHARGER_TABS.map((t) => ({ ...t, count: chargerBuckets[t.id].length }))}
               value={chargerTab}
-              onChange={setChargerTab}
+              onChange={switchChargerTab}
               ariaLabel="Charger queue stage"
             />
+
+            {chargerProductCounts.length > 0 && (
+              <div className="chips">
+                <button
+                  type="button"
+                  className={`chip ${productFilter === 'all' ? 'on' : ''}`}
+                  onClick={() => setProductFilter('all')}
+                >
+                  All
+                  <span className="chipCount">{chargerList.length}</span>
+                </button>
+                {chargerProductCounts.map(({ product, count }) => (
+                  <button
+                    key={product}
+                    type="button"
+                    className={`chip ${productFilter === product ? 'on' : ''}`}
+                    onClick={() => setProductFilter(product)}
+                  >
+                    {product}
+                    <span className="chipCount">{count}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="summary">
               <span>{chargerSummary.left}</span>
@@ -286,9 +330,9 @@ export default function Queue() {
 
             {loading && !rawTesla.length ? (
               <Skeleton rows={3} />
-            ) : chargerList.length ? (
+            ) : chargerListFiltered.length ? (
               <ul className="list">
-                {chargerList.map((i) => (
+                {chargerListFiltered.map((i) => (
                   <ChargerCard
                     key={i.id}
                     item={i}
@@ -328,6 +372,39 @@ export default function Queue() {
         .hustleWrap {
           margin-top: 6px;
           margin-bottom: 10px;
+        }
+        .chips {
+          display: flex;
+          gap: 6px;
+          overflow-x: auto;
+          padding: 10px 2px 2px;
+        }
+        .chip {
+          flex-shrink: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          background: var(--surface);
+          border: 1px solid var(--line);
+          color: var(--ink-2);
+          font-size: 11.5px;
+          font-weight: 600;
+          padding: 6px 11px;
+          border-radius: 999px;
+          white-space: nowrap;
+          transition: transform 120ms ease;
+        }
+        .chip:active {
+          transform: scale(0.95);
+        }
+        .chip.on {
+          background: var(--chargers-wash);
+          border-color: var(--chargers);
+          color: var(--chargers);
+        }
+        .chipCount {
+          font-variant-numeric: tabular-nums;
+          opacity: 0.75;
         }
         .summary {
           display: flex;

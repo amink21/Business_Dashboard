@@ -5,6 +5,7 @@ import AppShell from '../components/AppShell';
 import BarChart from '../components/BarChart';
 import Card from '../components/Card';
 import IconButton from '../components/IconButton';
+import InventoryStatusList from '../components/InventoryStatusList';
 import ProfitCalendar from '../components/ProfitCalendar';
 import RangeTabs from '../components/RangeTabs';
 import RecordFeed from '../components/RecordFeed';
@@ -300,8 +301,18 @@ export default function Stats() {
         </div>
 
         <div className="block">
-          <Card title={hustle === 'chargers' ? 'Inventory' : 'Order pipeline'} note="by status">
-            <BarChart data={statusBars} format={(v) => v} subFormat={(d) => fmtMoney(d.sub)} emptyText="No records in this range." />
+          <Card title={hustle === 'chargers' ? 'Inventory' : 'Order pipeline'} note={hustle === 'chargers' ? 'by status, tap to see stock' : 'by status'}>
+            {hustle === 'chargers' ? (
+              <InventoryStatusList
+                data={statusBars}
+                items={scoped}
+                format={(v) => v}
+                subFormat={(d) => fmtMoney(d.sub)}
+                emptyText="No records in this range."
+              />
+            ) : (
+              <BarChart data={statusBars} format={(v) => v} subFormat={(d) => fmtMoney(d.sub)} emptyText="No records in this range." />
+            )}
           </Card>
         </div>
 

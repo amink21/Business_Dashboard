@@ -26,7 +26,33 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Wrong PIN.' });
   }
 
-  const { itemId, status, salePrice } = req.body || {};
+  const body = req.body || {};
+
+  if (body.action === 'create') {
+    const product = typeof body.product === 'string' ? body.product.trim() : '';
+    const supplier = typeof body.supplier === 'string' ? body.supplier.trim() : '';
+    const purchasePrice = Number(body.purchasePrice);
+    const quantity = Number(body.quantity);
+    if (!product) return res.status(400).json({ error: 'Missing product type.' });
+    if (!Number.isFinite(purchasePrice) || purchasePrice <= 0) {
+      return res.status(400).json({ error: 'Purchase price must be a positive number.' });
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
+      return res.status(400).json({ error: 'Quantity must be between 1 and 100.' });
+    }
+
+    const created = await callScript(url, {
+      action: 'createTeslaItems',
+      token,
+      product,
+      supplier,
+      purchasePrice,
+      quantity: Math.round(quantity),
+    });
+    return res.status(created.status).json(created.body);
+  }
+
+  const { itemId, status, salePrice } = body;
   if (!itemId) return res.status(400).json({ error: 'Missing itemId.' });
   if (status !== undefined && !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
